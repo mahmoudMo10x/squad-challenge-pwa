@@ -1,5 +1,15 @@
 import type { CardType, Player, Position } from './types'
-import { createRng } from './rng'
+
+function createRng(seed: number) {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6D2B79F5) >>> 0
+    let value = state
+    value = Math.imul(value ^ (value >>> 15), value | 1)
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61)
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296
+  }
+}
 
 const firstNames = ['راشد','زياد','ياسر','مروان','سليم','عمر','تامر','نادر','فارس','أكرم','هيثم','مصعب','بدر','رامي','جاد','أنس','سيف','وليد','كنان','مازن','حسام','لؤي','نايف','كريم','مهند']
 const lastNames = ['السالمي','النجار','الحربي','كمال','القحطاني','شاهين','فؤاد','عادل','الدوسري','ناصر','جابر','عوض','منصور','خطاب','مراد','شريف','ربيع','شوقي','حمد','خليل']
