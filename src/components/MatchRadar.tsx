@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { applyTactic, formationCoords } from '../game/players'
 import { createRng } from '../game/draft'
-import type { MatchEvent } from '../game/types'
+import type { MatchEvent, Player } from '../game/types'
+import { PlayerAvatar } from './PlayerAvatar'
 
-const FRAMES = 60 // 1 second per minute of a 60-minute match.
+const FRAMES = 60 // 1 frame per minute of a 60-minute match.
 const GOAL_Y_HOME = 92
 const GOAL_Y_AWAY = 8
 
@@ -22,100 +23,112 @@ export interface MatchRadarProps {
   events: MatchEvent[]
   /** 0..60 minute clock. Drives which frame is shown. */
   elapsed: number
-  /** Used for ball side when the team is unknown. */
+  /** Perspective of the viewer. 'home' = your team plays bottom, 'away' = your team plays top. */
   yourSide?: 'home' | 'away'
-}
-
-/**
- * Animated football radar. Consumes authoritative MatchEvent timeline to drive ball
- * and player movement. Deterministic from seed + events.
- */
-export function MatchRadar({ homeFormation, awayFormation, homeTactic, awayTactic, seed, events, elapsed, yourSide = 'home' }: MatchRadarProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const homeRefs = useRef<Array<HTMLDivElement | null>>([])
-  const awayRefs = useRef<Array<HTMLDivElement | null>>([])
-  const ballRef = useRef<HTMLDivElement | null>(null)
-  const framesRef = useRef<ReturnType<typeof buildFrames> | null>(null)
-  const rafRef = useRef<number | null>(null)
-
-  if (!framesRef.current) {
-    framesRef.current = buildFrames(seed, homeFormation, awayFormation, homeTactic, awayTactic, events)
-  }
-
-  // Apply a frame whenever `elapsed` changes.
-  useEffect(() => {
-    const frames = framesRef.current
-    if (!frames) return
-    const minute = clamp(elapsed, 0, 60)
-    const idx = clamp(Math.round(minute) - 1, 0, FRAMES - 1)
-    const frame = frames[idx]
-    const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    const style = (el: HTMLDivElement | null, x: number, y: number) => {
-      if (!el) return
-      el.style.transform = `translate3d(${x}%, ${y}%, 0)`
-    }
-    if (reduced) {
-      // Instant jump; no transition.
-      homeRefs.current.forEach((el, i) => el && frame.home[i] && style(el, frame.home[i][0], frame.home[i][1]))
-      awayRefs.current.forEach((el, i) => el && frame.away[i] && style(el, frame.away[i][0], frame.away[i][1]))
-      if (ballRef.current) style(ballRef.current, frame.ball[0], frame.ball[1])
-    } else {
-      // CSS transition (set in App.css .radar-dot / .ball-radar) handles the rest.
-      homeRefs.current.forEach((el, i) => el && frame.home[i] && style(el, frame.home[i][0], frame.home[i][1]))
-      awayRefs.current.forEach((el, i) => el && frame.away[i] && style(el, frame.away[i][0], frame.away[i][1]))
-      if (ballRef.current) style(ballRef.current, frame.ball[0], frame.ball[1])
-    }
-  }, [elapsed, yourSide])
-
-  // rAF loop for smoother updates between prop changes (catches up after tab visibility changes).
-  useEffect(() => {
-    const tick = () => rafRef.current = requestAnimationFrame(tick)
-    rafRef.current = requestAnimationFrame(tick)
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
-  }, [])
-
-  // Recompute frames when the seed or events change (new match).
-  useEffect(() => {
-    framesRef.current = buildFrames(seed, homeFormation, awayFormation, homeTactic, awayTactic, events)
-  }, [seed, homeFormation, awayFormation, homeTactic, awayTactic, events])
-
-  return (
-    <div className="match-pitch" ref={containerRef}>
-      <div className="center-circle" />
-      <div className="half-line" />
-      <div className="penalty-box top" />
-      <div className="penalty-box bottom" />
-      <div className="goal top" />
-      <div className="goal bottom" />
-      <div className="ball-radar" ref={ballRef} style={{ left: '0%', top: '0%' }} />
-      {Array.from({ length: 7 }, (_, i) => (
-        <div
-          key={`h${i}`}
-          ref={(el) => { homeRefs.current[i] = el }}
-          className="radar-dot home-dot"
-          style={{ left: '0%', top: '0%' }}
-        >
-          <i>{i + 1}</i>
-        </div>
-      ))}
-      {Array.from({ length: 7 }, (_, i) => (
-        <div
-          key={`a${i}`}
-          ref={(el) => { awayRefs.current[i] = el }}
-          className="radar-dot away-dot"
-          style={{ left: '0%', top: '0%' }}
-        >
-          <i>{i + 1}</i>
-        </div>
-      ))}
-    </div>
-  )
+  /** Optional squad lists so each radar dot shows its player's face. */
+  homeSquad?: Player[]
+  awaySquad?: Player[]
 }
 
 interface RadarFrame {
   home: [number, number][]
   away: [number, number][]
   ball: [number, number]
+}
+
+/**
+ * Animated football radar. Consumes authoritative MatchEvent timeline to drive ball
+ * and player movement. Deterministic from seed + events.
+ *
+ * Markers are positioned with `left: ${x}%` / `top: ${y}%` (pitch-relative) and
+ * `transform: translate(-50%, -50%)` — percentages are relative to the pitch, not the marker.
+ */
+export function MatchRadar({ homeFormation, awayFormation, homeTactic, awayTactic, seed, events, elapsed, homeSquad, awaySquad }: MatchRadarProps) {
+  const homeRefs = useRef<Array<HTMLDivElement | null>>([])
+  const awayRefs = useRef<Array<HTMLDivElement | null>>([])
+  const ballRef = useRef<HTMLDivElement | null>(null)
+  const framesRef = useRef<RadarFrame[] | null>(null)
+  const lastSeedRef = useRef<number | null>(null)
+
+  const frames = useMemo(() => {
+    if (!framesRef.current || lastSeedRef.current !== seed) {
+      framesRef.current = buildFrames(seed, homeFormation, awayFormation, homeTactic, awayTactic, events)
+      lastSeedRef.current = seed
+    }
+    return framesRef.current!
+  }, [seed, homeFormation, awayFormation, homeTactic, awayTactic, events])
+
+  // Apply a frame whenever `elapsed` changes — pitch-relative positioning.
+  useEffect(() => {
+    const minute = clamp(Math.round(elapsed), 0, 60)
+    const idx = clamp(minute - 1, 0, FRAMES - 1)
+    const frame = frames[idx]
+    const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const apply = (el: HTMLDivElement | null, x: number, y: number) => {
+      if (!el) return
+      // Pitch-relative coordinates: left/top are percentages of the pitch container;
+      // translate(-50%, -50%) centers the marker on that point.
+      el.style.left = `${clamp(x, 0, 100)}%`
+      el.style.top = `${clamp(y, 0, 100)}%`
+      el.style.transform = 'translate(-50%, -50%)'
+      if (reduced) el.style.transition = 'none'
+    }
+    for (let i = 0; i < 7; i += 1) {
+      if (frame.home[i]) apply(homeRefs.current[i], frame.home[i][0], frame.home[i][1])
+      if (frame.away[i]) apply(awayRefs.current[i], frame.away[i][0], frame.away[i][1])
+    }
+    apply(ballRef.current, frame.ball[0], frame.ball[1])
+  }, [elapsed, frames])
+
+  // Recompute frames when seed or events change (new match).
+  useEffect(() => {
+    framesRef.current = buildFrames(seed, homeFormation, awayFormation, homeTactic, awayTactic, events)
+    lastSeedRef.current = seed
+  }, [seed, homeFormation, awayFormation, homeTactic, awayTactic, events])
+
+  const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
+  return (
+    <div className="match-pitch" data-testid="match-radar">
+      <div className="center-circle" />
+      <div className="half-line" />
+      <div className="penalty-box top" />
+      <div className="penalty-box bottom" />
+      <div className="goal top" />
+      <div className="goal bottom" />
+      <div className="ball-radar" ref={ballRef} style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)', transition: reduced ? 'none' : undefined }} />
+      {Array.from({ length: 7 }, (_, i) => {
+        const player = homeSquad?.[i]
+        const isGK = i === 0
+        return (
+          <div
+            key={`h${i}`}
+            ref={(el) => { homeRefs.current[i] = el }}
+            className={`radar-dot home-dot ${isGK ? 'gk-ring' : ''}`}
+            style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)', transition: reduced ? 'none' : undefined }}
+            data-player-id={player?.id ?? `home-${i}`}
+          >
+            {player ? <PlayerAvatar id={player.id} size={20} /> : <i>{i + 1}</i>}
+          </div>
+        )
+      })}
+      {Array.from({ length: 7 }, (_, i) => {
+        const player = awaySquad?.[i]
+        const isGK = i === 0
+        return (
+          <div
+            key={`a${i}`}
+            ref={(el) => { awayRefs.current[i] = el }}
+            className={`radar-dot away-dot ${isGK ? 'gk-ring' : ''}`}
+            style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)', transition: reduced ? 'none' : undefined }}
+            data-player-id={player?.id ?? `away-${i}`}
+          >
+            {player ? <PlayerAvatar id={player.id} size={20} /> : <i>{i + 1}</i>}
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 function buildFrames(
@@ -132,20 +145,18 @@ function buildFrames(
     (formationCoords[awayFormation] ?? formationCoords['2-2-2']).map(([x, y]) => [x, 100 - y] as [number, number]),
     awayTactic,
   )
-  // Seed small jitter so the dots look alive at minute 0.
-  let homePos = homeBase.map(([x, y]) => [x + (rng() - 0.5) * 4, y + (rng() - 0.5) * 3] as [number, number])
-  let awayPos = awayBase.map(([x, y]) => [x + (rng() - 0.5) * 4, y + (rng() - 0.5) * 3] as [number, number])
+
+  // Frame 0 (kickoff): home in their formation near own goal (low y), away mirrored, ball at center.
+  let homePos = homeBase.map(([x, y]) => [x, y] as [number, number])
+  let awayPos = awayBase.map(([x, y]) => [x, y] as [number, number])
   let ballPos: [number, number] = [50, 50]
 
-  // Sort events by minute for lookup.
   const sortedEvents = [...events].sort((a, b) => a.minute - b.minute)
-  // Track recent possession flips: limit drift.
   let possessionTarget: { team: 'home' | 'away'; untilMinute: number } | null = null
   let possession: 'home' | 'away' = 'home'
 
   const frames: RadarFrame[] = []
   for (let minute = 1; minute <= FRAMES; minute++) {
-    // Find the most recent event at-or-before this minute.
     const event = [...sortedEvents].reverse().find((e) => e.minute <= minute)
     if (event) {
       if (event.type === 'goal') {
@@ -153,8 +164,8 @@ function buildFrames(
         possessionTarget = { team: possession, untilMinute: minute + 6 }
       } else if (event.type === 'halftime') {
         possessionTarget = { team: 'home', untilMinute: minute + 4 }
+        ballPos = [50, 50]
       } else if (event.type === 'fulltime') {
-        // Settle ball near center
         ballPos = [50, 50]
         possessionTarget = null
       } else if (event.type === 'chance' || event.type === 'save') {
@@ -163,26 +174,26 @@ function buildFrames(
       } else if (event.type === 'kickoff') {
         possession = 'home'
         possessionTarget = { team: 'home', untilMinute: minute + 2 }
+        ballPos = [50, 50]
       }
     }
-    // After possession target window, drift back toward a mixed state.
     if (possessionTarget && minute > possessionTarget.untilMinute) {
       possessionTarget = null
     }
 
-    // Player shape: in possession -> team spreads into attacking shape; defending team sits deeper.
     const attTarget: [number, number] = possession === 'home' ? [50, 75] : [50, 25]
     const defTarget: [number, number] = possession === 'home' ? [50, 30] : [50, 70]
     homePos = moveToward(homePos, attTarget, 0.18, rng)
     awayPos = moveToward(awayPos, defTarget, 0.14, rng)
-    // Dots hold their tactical shape (applyTactic) most of the time; small noise makes it look alive.
     homePos = homePos.map(([x, y], i) => baseSpring(x, y, homeBase[i][0], homeBase[i][1], 0.85, rng))
     awayPos = awayPos.map(([x, y], i) => baseSpring(x, y, awayBase[i][0], awayBase[i][1], 0.85, rng))
-
-    // Ball position driven by event: kickoff center, goal -> goal, halftime -> center, save/chance -> GK area, between -> follows possession player
     ballPos = ballForMinute(ballPos, minute, sortedEvents)
 
-    frames.push({ home: homePos, away: awayPos, ball: ballPos })
+    frames.push({
+      home: homePos.map(([x, y]) => [clamp(x, 0, 100), clamp(y, 0, 100)] as [number, number]),
+      away: awayPos.map(([x, y]) => [clamp(x, 0, 100), clamp(y, 0, 100)] as [number, number]),
+      ball: [clamp(ballPos[0], 0, 100), clamp(ballPos[1], 0, 100)],
+    })
   }
   return frames
 }
@@ -194,8 +205,8 @@ function moveToward(
   rng: () => number,
 ): [number, number][] {
   return positions.map(([x, y]) => [
-    clamp(x + (target[0] - x) * pull + (rng() - 0.5) * 1.2, 5, 95),
-    clamp(y + (target[1] - y) * pull + (rng() - 0.5) * 1.2, 5, 95),
+    x + (target[0] - x) * pull + (rng() - 0.5) * 1.2,
+    y + (target[1] - y) * pull + (rng() - 0.5) * 1.2,
   ])
 }
 
@@ -208,8 +219,8 @@ function baseSpring(
   rng: () => number,
 ): [number, number] {
   return [
-    clamp(x + (baseX - x) * pull + (rng() - 0.5) * 1.4, 5, 95),
-    clamp(y + (baseY - y) * pull + (rng() - 0.5) * 1.4, 5, 95),
+    x + (baseX - x) * pull + (rng() - 0.5) * 1.4,
+    y + (baseY - y) * pull + (rng() - 0.5) * 1.4,
   ]
 }
 
@@ -218,9 +229,8 @@ function ballForMinute(
   minute: number,
   events: MatchEvent[],
 ): [number, number] {
-  // Find the most recent event at-or-before this minute.
   const ev = [...events].reverse().find((e) => e.minute <= minute)
-  if (!ev) return [50, 50]
+  if (!ev) return prev
   if (ev.type === 'kickoff') return [50, 50]
   if (ev.type === 'halftime' || ev.type === 'fulltime') {
     return [
@@ -229,15 +239,12 @@ function ballForMinute(
     ]
   }
   if (ev.type === 'goal' && ev.team) {
-    // Snap ball to the goal it's going into.
     return ev.team === 'home' ? [50, GOAL_Y_HOME] : [50, GOAL_Y_AWAY]
   }
   if (ev.type === 'save') {
-    // Ball reaches the goalkeeper area (low y for home keeper, high y for away keeper).
     return ev.team === 'home' ? [50, 10] : [50, 90]
   }
   if (ev.type === 'chance') {
-    // Ball pushes toward the goal but not all the way.
     const targetY = ev.team === 'home' ? 80 : 20
     return [
       prev[0] + (50 - prev[0]) * 0.15,

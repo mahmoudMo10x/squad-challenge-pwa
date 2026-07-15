@@ -6,9 +6,10 @@ import { randomUUID } from 'node:crypto'
 import { Server, type Socket } from 'socket.io'
 import { PLAYERS, slotOrder } from '../src/game/players.js'
 import { createRng } from '../src/game/draft.js'
+import { buildCardSchedule } from '../src/game/cardSchedule.js'
 import { countCards, consumeCard, addCard, stealPlayer, swapPlayer } from '../src/game/cards.js'
 import { simulateMatch } from '../src/game/simulation.js'
-import type { BoxOffer, CardType, Formation, Player, Position, SquadSetup, Tactic } from '../src/game/types.js'
+import type { BoxOffer, CardSchedule, CardType, Formation, Player, Position, SquadSetup, Tactic } from '../src/game/types.js'
 import type { ClientToServerEvents, OnlinePhase, OnlineSnapshot, ServerToClientEvents } from '../src/online/protocol.js'
 
 type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents>
@@ -17,7 +18,10 @@ type Match = {
   id: string; version: number; phase: OnlinePhase; seats: [Seat, Seat]; starter: 0 | 1; active: 0 | 1; turnIndex: number
   offers: BoxOffer[][]; currentOffers: BoxOffer[]; revealedId?: string; mandatory: boolean; cardDone: [boolean, boolean]
   deadline?: number; timer?: NodeJS.Timeout; rng: () => number; result?: ReturnType<typeof simulateMatch>; message?: string
-  simulationSeed?: number
+  /** Server-authoritative simulation seed — also drives card schedule. */
+  simulationSeed: number
+  /** Match-level bonus-card budget. Built once from simulationSeed. */
+  cardSchedule: CardSchedule
 }
 
 const app = express()
@@ -37,9 +41,13 @@ app.get('/health', (_req, res) => res.json({ ok: true, waiting: waiting.length, 
 app.use(express.static('dist'))
 app.use((_req, res) => res.sendFile('index.html', { root: 'dist' }))
 
-function precommitOffers(rng: () => number): BoxOffer[][] {
+/**
+ * Build all 14 turn offers. bonusCard values come from the deterministic
+ * match-level card schedule (65% none / 28% one / 7% two). Cards that aren't
+ * scheduled for a (turn, box) slot are guaranteed null.
+ */
+function precommitOffers(rng: () => number, schedule: CardSchedule): BoxOffer[][] {
   const pools = new Map<Position, Player[]>()
-  const bonusCards: CardType[] = [null, null, null, null, null, 'حماية', 'سرقة', 'كشف', 'تبديل']
   for (const position of ['GK', 'DEF', 'MID', 'FWD'] as Position[]) {
     const pool = PLAYERS.filter((player) => player.position === position)
     for (let index = pool.length - 1; index > 0; index -= 1) {
@@ -49,10 +57,10 @@ function precommitOffers(rng: () => number): BoxOffer[][] {
   }
   return Array.from({ length: 14 }, (_, turn) => {
     const position = slotOrder[Math.floor(turn / 2)]
-    return pools.get(position)!.splice(0, 4).map((player) => ({
+    return pools.get(position)!.splice(0, 4).map((player, boxIndex) => ({
       id: randomUUID(),
       player: { ...player },
-      bonusCard: bonusCards[Math.floor(rng() * bonusCards.length)],
+      bonusCard: schedule.slots[`${turn}-${boxIndex}`] ?? null,
       opened: false,
       rejected: false,
     }))
@@ -67,6 +75,7 @@ function publicSnapshot(match: Match, you: 0 | 1): OnlineSnapshot {
     turnIndex: match.turnIndex, slot: match.phase === 'draft' ? slotOrder[Math.floor(match.turnIndex / 2)] : undefined,
     boxes: match.currentOffers.map((offer) => ({ id: offer.id, opened: offer.opened, rejected: offer.rejected, player: offer.opened ? offer.player : undefined, bonusCard: offer.opened ? offer.bonusCard : undefined })),
     mandatory: match.mandatory, cardDone: match.cardDone, deadline: match.deadline, message: match.message, result: match.result,
+    simulationSeed: match.simulationSeed,
   }
 }
 function broadcast(match: Match) {
@@ -138,7 +147,7 @@ function lockSetup(match: Match, seat: 0 | 1, formation: Formation, tactic: Tact
   const other = (1 - seat) as 0 | 1
   if (match.seats[other].setup) {
     clearTimer(match); match.phase = 'simulation'
-    match.result = simulateMatch(match.seats[0].squad, match.seats[1].squad, match.seats[0].setup!, match.seats[1].setup!, Math.floor(match.rng() * 2 ** 31))
+    match.result = simulateMatch(match.seats[0].squad, match.seats[1].squad, match.seats[0].setup!, match.seats[1].setup!, match.simulationSeed)
     match.deadline = Date.now() + 60_000
     match.timer = setTimeout(() => {
       match.phase = 'result'; match.version += 1; match.deadline = undefined; broadcast(match)
@@ -151,10 +160,25 @@ function lockSetup(match: Match, seat: 0 | 1, formation: Formation, tactic: Tact
   broadcast(match)
 }
 function createMatch(a: typeof waiting[number], b: typeof waiting[number]) {
-  const rng = createRng(Date.now() ^ Math.floor(Math.random() * 2 ** 31)); const starter = (rng() < .5 ? 0 : 1) as 0 | 1
-  const match: Match = { id: randomUUID(), version: 1, phase: 'draft', seats: [{ token: a.token, socketId: a.socketId, name: a.name, squad: [], cards: [] }, { token: b.token, socketId: b.socketId, name: b.name, squad: [], cards: [] }], starter, active: starter, turnIndex: 0, offers: [], currentOffers: [], mandatory: false, cardDone: [false, false], rng }
-  match.offers = precommitOffers(rng); match.currentOffers = match.offers[0]; matches.set(match.id, match)
-  tokenToMatch.set(a.token, { matchId: match.id, seat: 0 }); tokenToMatch.set(b.token, { matchId: match.id, seat: 1 })
+  const setupRng = createRng(Date.now() ^ Math.floor(Math.random() * 2 ** 31))
+  const simulationSeed = Math.floor(setupRng() * 2 ** 31)
+  const cardSchedule = buildCardSchedule(simulationSeed)
+  const matchRng = createRng(simulationSeed)
+  const starter = (matchRng() < .5 ? 0 : 1) as 0 | 1
+  const match: Match = {
+    id: randomUUID(), version: 1, phase: 'draft',
+    seats: [
+      { token: a.token, socketId: a.socketId, name: a.name, squad: [], cards: [] },
+      { token: b.token, socketId: b.socketId, name: b.name, squad: [], cards: [] },
+    ],
+    starter, active: starter, turnIndex: 0, offers: [], currentOffers: [], mandatory: false, cardDone: [false, false], rng: matchRng,
+    simulationSeed, cardSchedule,
+  }
+  match.offers = precommitOffers(matchRng, cardSchedule)
+  match.currentOffers = match.offers[0]
+  matches.set(match.id, match)
+  tokenToMatch.set(a.token, { matchId: match.id, seat: 0 })
+  tokenToMatch.set(b.token, { matchId: match.id, seat: 1 })
   socketFor(match.seats[0])?.join(match.id); socketFor(match.seats[1])?.join(match.id); armTimer(match); broadcast(match)
 }
 

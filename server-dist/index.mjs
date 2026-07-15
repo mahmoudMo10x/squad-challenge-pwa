@@ -49,6 +49,56 @@ function createRng(seed) {
   };
 }
 
+// src/game/cardSchedule.ts
+var CARD_WEIGHTS = {
+  "\u062D\u0645\u0627\u064A\u0629": 30,
+  "\u0643\u0634\u0641": 25,
+  "\u0633\u0631\u0642\u0629": 25,
+  "\u062A\u0628\u062F\u064A\u0644": 20
+};
+var CARD_COUNT_WEIGHTS = { 0: 65, 1: 28, 2: 7 };
+var TOTAL_CARD_WEIGHT = Object.values(CARD_WEIGHTS).reduce((a, b) => a + b, 0);
+var TOTAL_COUNT_WEIGHT = CARD_COUNT_WEIGHTS[0] + CARD_COUNT_WEIGHTS[1] + CARD_COUNT_WEIGHTS[2];
+function pickCount(rng) {
+  const total = TOTAL_COUNT_WEIGHT;
+  const pick = rng() * total;
+  let acc = 0;
+  acc += CARD_COUNT_WEIGHTS[0];
+  if (pick < acc) return 0;
+  acc += CARD_COUNT_WEIGHTS[1];
+  if (pick < acc) return 1;
+  return 2;
+}
+function pickCardType(rng) {
+  const pick = rng() * TOTAL_CARD_WEIGHT;
+  let acc = 0;
+  for (const [type, weight] of Object.entries(CARD_WEIGHTS)) {
+    acc += weight;
+    if (pick < acc) return type;
+  }
+  return "\u062D\u0645\u0627\u064A\u0629";
+}
+function buildCardSchedule(seed) {
+  const rng = createRng(seed ^ 828117);
+  const slots = {};
+  const count = pickCount(rng);
+  if (count === 0) return { seed, slots, weights: { ...CARD_WEIGHTS } };
+  const used = /* @__PURE__ */ new Set();
+  const picks = [];
+  while (picks.length < count) {
+    const turn = Math.floor(rng() * 14);
+    const box = Math.floor(rng() * 4);
+    const key = `${turn}-${box}`;
+    if (used.has(key)) continue;
+    used.add(key);
+    picks.push([turn, box]);
+  }
+  for (const [turn, box] of picks) {
+    slots[`${turn}-${box}`] = pickCardType(rng);
+  }
+  return { seed, slots, weights: { ...CARD_WEIGHTS } };
+}
+
 // src/game/cards.ts
 var countCards = (inventory, type) => inventory.filter((card) => card === type).length;
 function consumeCard(inventory, type) {
@@ -104,19 +154,22 @@ function squadPower(squad, setup) {
   const base = squad.reduce((sum, player) => sum + player.rating, 0) / squad.length;
   const attack = squad.reduce((sum, player) => sum + player.attack, 0) / squad.length;
   const defense = squad.reduce((sum, player) => sum + player.defense, 0) / squad.length;
+  const passing = squad.reduce((sum, player) => sum + player.passing, 0) / squad.length;
   const stamina = squad.reduce((sum, player) => sum + player.stamina, 0) / squad.length;
   const tactic = tacticModifier[setup.tactic];
   const formation = formationModifier[setup.formation];
   return {
-    total: base * 0.55 + attack * 0.2 + defense * 0.18 + stamina * 0.07 + tactic.attack * 0.5 + tactic.defense * 0.5 + tactic.stamina * 0.25 + formation.attack * 0.5 + formation.defense * 0.5,
+    total: base * 0.55 + attack * 0.18 + defense * 0.16 + passing * 0.06 + stamina * 0.05 + tactic.attack * 0.5 + tactic.defense * 0.5 + tactic.stamina * 0.25 + formation.attack * 0.5 + formation.defense * 0.5,
     attack: attack + tactic.attack + formation.attack,
-    defense: defense + tactic.defense + formation.defense
+    defense: defense + tactic.defense + formation.defense,
+    pace: squad.reduce((sum, player) => sum + player.pace, 0) / squad.length
   };
 }
 function simulateMatch(home, away, homeSetup, awaySetup, seed) {
   const rng = createRng(seed);
   const hp = squadPower(home, homeSetup);
   const ap = squadPower(away, awaySetup);
+  const delta = (hp.total - ap.total) / 8;
   let homeScore = 0;
   let awayScore = 0;
   const events = [{ minute: 0, type: "kickoff", text: "\u0627\u0646\u0637\u0644\u0642\u062A \u0627\u0644\u0645\u0628\u0627\u0631\u0627\u0629", homeScore, awayScore }];
@@ -124,17 +177,19 @@ function simulateMatch(home, away, homeSetup, awaySetup, seed) {
     if (minute >= 29 && !events.some((event) => event.type === "halftime")) {
       events.push({ minute: 30, type: "halftime", text: "\u0646\u0647\u0627\u064A\u0629 \u0627\u0644\u0634\u0648\u0637 \u0627\u0644\u0623\u0648\u0644", homeScore, awayScore });
     }
-    const homeChance = Math.max(0.32, Math.min(0.68, 0.5 + (hp.total - ap.total) / 75));
-    const team = rng() < homeChance ? "home" : "away";
+    const eventRoll = rng();
+    const homeChance = Math.max(0.3, Math.min(0.72, 0.5 + delta * 0.26));
+    const team = eventRoll < homeChance ? "home" : "away";
     const attack = team === "home" ? hp.attack : ap.attack;
     const defense = team === "home" ? ap.defense : hp.defense;
-    const goalProbability = Math.max(0.12, Math.min(0.42, 0.24 + (attack - defense) / 180));
+    const pace = team === "home" ? hp.pace : ap.pace;
+    const goalProbability = Math.max(0.09, Math.min(0.44, 0.13 + (attack - defense) / 180 + pace / 1500));
     if (rng() < goalProbability) {
       if (team === "home") homeScore += 1;
       else awayScore += 1;
       events.push({ minute, type: "goal", team, text: team === "home" ? "\u0647\u062F\u0641 \u0631\u0627\u0626\u0639 \u0644\u0641\u0631\u064A\u0642\u0643!" : "\u0647\u062F\u0641 \u0644\u0644\u0645\u0646\u0627\u0641\u0633", homeScore, awayScore });
     } else {
-      const saved = rng() < 0.48;
+      const saved = rng() < 0.5;
       events.push({ minute, type: saved ? "save" : "chance", team, text: saved ? "\u062A\u0635\u062F\u064A \u062D\u0627\u0633\u0645 \u0645\u0646 \u0627\u0644\u062D\u0627\u0631\u0633" : "\u0641\u0631\u0635\u0629 \u062E\u0637\u064A\u0631\u0629 \u062A\u0645\u0631 \u0628\u062C\u0648\u0627\u0631 \u0627\u0644\u0645\u0631\u0645\u0649", homeScore, awayScore });
     }
   }
@@ -144,9 +199,11 @@ function simulateMatch(home, away, homeSetup, awaySetup, seed) {
   if (homeScore === awayScore) {
     homePenalties = 0;
     awayPenalties = 0;
+    const homeEdge = 0.5 + delta * 0.3;
+    const awayEdge = 0.5 - delta * 0.3;
     for (let kick = 0; kick < 5; kick += 1) {
-      if (rng() < Math.max(0.58, Math.min(0.9, 0.74 + (hp.total - ap.total) / 250))) homePenalties += 1;
-      if (rng() < Math.max(0.58, Math.min(0.9, 0.74 + (ap.total - hp.total) / 250))) awayPenalties += 1;
+      if (rng() < Math.max(0.4, Math.min(0.95, homeEdge))) homePenalties += 1;
+      if (rng() < Math.max(0.4, Math.min(0.95, awayEdge))) awayPenalties += 1;
     }
     while (homePenalties === awayPenalties) {
       const h = rng() < 0.74;
@@ -179,9 +236,8 @@ app.use(rateLimit({ windowMs: 6e4, limit: 180, standardHeaders: true, legacyHead
 app.get("/health", (_req, res) => res.json({ ok: true, waiting: waiting.length, matches: matches.size }));
 app.use(express.static("dist"));
 app.use((_req, res) => res.sendFile("index.html", { root: "dist" }));
-function precommitOffers(rng) {
+function precommitOffers(rng, schedule) {
   const pools = /* @__PURE__ */ new Map();
-  const bonusCards2 = [null, null, null, null, null, "\u062D\u0645\u0627\u064A\u0629", "\u0633\u0631\u0642\u0629", "\u0643\u0634\u0641", "\u062A\u0628\u062F\u064A\u0644"];
   for (const position of ["GK", "DEF", "MID", "FWD"]) {
     const pool = PLAYERS.filter((player) => player.position === position);
     for (let index = pool.length - 1; index > 0; index -= 1) {
@@ -192,10 +248,10 @@ function precommitOffers(rng) {
   }
   return Array.from({ length: 14 }, (_, turn) => {
     const position = slotOrder[Math.floor(turn / 2)];
-    return pools.get(position).splice(0, 4).map((player) => ({
+    return pools.get(position).splice(0, 4).map((player, boxIndex) => ({
       id: randomUUID(),
       player: { ...player },
-      bonusCard: bonusCards2[Math.floor(rng() * bonusCards2.length)],
+      bonusCard: schedule.slots[`${turn}-${boxIndex}`] ?? null,
       opened: false,
       rejected: false
     }));
@@ -220,7 +276,8 @@ function publicSnapshot(match, you) {
     cardDone: match.cardDone,
     deadline: match.deadline,
     message: match.message,
-    result: match.result
+    result: match.result,
+    simulationSeed: match.simulationSeed
   };
 }
 function broadcast(match) {
@@ -341,7 +398,7 @@ function lockSetup(match, seat, formation, tactic) {
   if (match.seats[other].setup) {
     clearTimer(match);
     match.phase = "simulation";
-    match.result = simulateMatch(match.seats[0].squad, match.seats[1].squad, match.seats[0].setup, match.seats[1].setup, Math.floor(match.rng() * 2 ** 31));
+    match.result = simulateMatch(match.seats[0].squad, match.seats[1].squad, match.seats[0].setup, match.seats[1].setup, match.simulationSeed);
     match.deadline = Date.now() + 6e4;
     match.timer = setTimeout(() => {
       match.phase = "result";
@@ -360,10 +417,31 @@ function lockSetup(match, seat, formation, tactic) {
   broadcast(match);
 }
 function createMatch(a, b) {
-  const rng = createRng(Date.now() ^ Math.floor(Math.random() * 2 ** 31));
-  const starter = rng() < 0.5 ? 0 : 1;
-  const match = { id: randomUUID(), version: 1, phase: "draft", seats: [{ token: a.token, socketId: a.socketId, name: a.name, squad: [], cards: [] }, { token: b.token, socketId: b.socketId, name: b.name, squad: [], cards: [] }], starter, active: starter, turnIndex: 0, offers: [], currentOffers: [], mandatory: false, cardDone: [false, false], rng };
-  match.offers = precommitOffers(rng);
+  const setupRng = createRng(Date.now() ^ Math.floor(Math.random() * 2 ** 31));
+  const simulationSeed = Math.floor(setupRng() * 2 ** 31);
+  const cardSchedule = buildCardSchedule(simulationSeed);
+  const matchRng = createRng(simulationSeed);
+  const starter = matchRng() < 0.5 ? 0 : 1;
+  const match = {
+    id: randomUUID(),
+    version: 1,
+    phase: "draft",
+    seats: [
+      { token: a.token, socketId: a.socketId, name: a.name, squad: [], cards: [] },
+      { token: b.token, socketId: b.socketId, name: b.name, squad: [], cards: [] }
+    ],
+    starter,
+    active: starter,
+    turnIndex: 0,
+    offers: [],
+    currentOffers: [],
+    mandatory: false,
+    cardDone: [false, false],
+    rng: matchRng,
+    simulationSeed,
+    cardSchedule
+  };
+  match.offers = precommitOffers(matchRng, cardSchedule);
   match.currentOffers = match.offers[0];
   matches.set(match.id, match);
   tokenToMatch.set(a.token, { matchId: match.id, seat: 0 });

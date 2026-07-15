@@ -26,6 +26,16 @@ export interface BoxOffer {
   rejected: boolean
 }
 
+/** Pre-scheduled card placements for a whole match: which (turn, box) pairs hold a bonus. */
+export interface CardSchedule {
+  /** Seed the schedule was derived from — must match the simulation seed. */
+  seed: number
+  /** Map from "turnIndex-boxIndex" → card type. Unlisted positions get null. */
+  slots: Record<string, Exclude<CardType, null>>
+  /** Weighted card-type distribution used when generating slots. */
+  weights: Record<Exclude<CardType, null>, number>
+}
+
 export interface SquadSetup {
   formation: Formation
   tactic: Tactic

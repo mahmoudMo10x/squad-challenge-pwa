@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import type { ClientToServerEvents, OnlineSnapshot, ServerToClientEvents } from './online/protocol'
 import type { CardType, Formation, Player, Tactic } from './game/types'
@@ -6,14 +6,43 @@ import { countCards } from './game/cards'
 import { positionLabel } from './game/players'
 import { FormationPitch } from './components/FormationPitch'
 import { MatchRadar } from './components/MatchRadar'
+import { PlayerAvatar } from './components/PlayerAvatar'
 
 const formations: Formation[] = ['2-2-2', '3-2-1', '2-3-1', '1-3-2']
 const tactics: Tactic[] = ['متوازن', 'هجومي', 'دفاعي', 'ضغط عالٍ', 'مرتدات']
-const initials = (name: string) => name.split(' ').map((part) => part[0]).join('').slice(0, 2)
 const cardIcon = (card: CardType) => card ? ({ حماية: '🛡️', سرقة: '🗡️', كشف: '👁️', تبديل: '🔄' } as const)[card] : ''
 
 function MiniCard({ player, protectedLabel = false }: { player: Player; protectedLabel?: boolean }) {
-  return <div className="online-player"><b>{player.rating}</b><span>{initials(player.name)}</span><strong>{player.name}</strong><small>{player.position}{protectedLabel && player.protected ? ' • 🛡️ محمي' : ''}</small></div>
+  return (
+    <div className="online-player">
+      <b>{player.rating}</b>
+      <span className="avatar-frame"><PlayerAvatar id={player.id} size={44} /></span>
+      <strong>{player.name}</strong>
+      <small>{player.position}{protectedLabel && player.protected ? ' • 🛡️ محمي' : ''}</small>
+    </div>
+  )
+}
+
+function ProfileInventory({ cards }: { cards: CardType[] }) {
+  const visible: Array<{ type: 'سرقة' | 'كشف' | 'تبديل'; emoji: string }> = [
+    { type: 'كشف', emoji: '👁️' },
+    { type: 'سرقة', emoji: '🗡️' },
+    { type: 'تبديل', emoji: '🔄' },
+  ]
+  const items = visible
+    .map((slot) => ({ ...slot, count: countCards(cards, slot.type) }))
+    .filter((slot) => slot.count > 0)
+  if (!items.length) return null
+  return (
+    <div className="profile-inventory">
+      {items.map((slot) => (
+        <span key={slot.type} className="profile-inventory-chip">
+          <span className="chip-icon">{slot.emoji}</span>
+          <span className="chip-count">{slot.count}</span>
+        </span>
+      ))}
+    </div>
+  )
 }
 
 export default function OnlineGame({ onExit }: { onExit: () => void }) {
@@ -62,10 +91,11 @@ export default function OnlineGame({ onExit }: { onExit: () => void }) {
   const opened = snapshot?.boxes.find((box) => box.opened && !box.rejected)
   const elapsed = snapshot?.phase === 'simulation' && snapshot.deadline ? Math.min(60, Math.max(0, 60 - Math.ceil((snapshot.deadline - now) / 1000))) : snapshot?.phase === 'result' ? 60 : 0
   const currentEvent = useMemo(() => snapshot?.result?.events.filter((event) => event.minute <= elapsed).at(-1), [snapshot?.result, elapsed])
+  // Perspective: snapshot.you=0 → I'm "home"; snapshot.you=1 → I'm "away".
   const liveMyScore = snapshot?.you === 0 ? currentEvent?.homeScore : currentEvent?.awayScore
   const liveOpponentScore = snapshot?.you === 0 ? currentEvent?.awayScore : currentEvent?.homeScore
-  // Perspective: I (snapshot.you=0) am the "home" team.
   const mySide: 'home' | 'away' = snapshot?.you === 0 ? 'home' : 'away'
+  const iWon = snapshot?.result && ((snapshot.you === 0 && snapshot.result.winner === 'home') || (snapshot.you === 1 && snapshot.result.winner === 'away'))
 
   const boxClick = (boxId: string) => {
     if (!base || !myTurn) return
@@ -77,35 +107,167 @@ export default function OnlineGame({ onExit }: { onExit: () => void }) {
     emit('card:action', { ...base, type: cardMode, targetId })
   }
 
-  if (!snapshot) return <section className="online-queue screen-enter"><button className="exit-button" onClick={onExit}>×</button><div className="radar"><span className="radar-avatar">أ</span><i/><i/><i/></div><h2>{connection === 'offline' ? 'الخادم غير متصل' : 'جاري البحث عن لاعب حقيقي'}</h2><p>{error || 'ابقَ في الشاشة حتى نجد المنافس المناسب...'}</p>{connection === 'offline' && <button className="primary-button" onClick={() => window.location.reload()}>إعادة الاتصال</button>}</section>
+  if (!snapshot) return (
+    <section className="online-queue screen-enter">
+      <button className="exit-button" onClick={onExit}>×</button>
+      <div className="radar"><span className="radar-avatar"><PlayerAvatar id="opponent-search" size={56} /></span><i/><i/><i/></div>
+      <h2>{connection === 'offline' ? 'الخادم غير متصل' : 'جاري البحث عن لاعب حقيقي'}</h2>
+      <p>{error || 'ابقَ في الشاشة حتى نجد المنافس المناسب...'}</p>
+      {connection === 'offline' && <button className="primary-button" onClick={() => window.location.reload()}>إعادة الاتصال</button>}
+    </section>
+  )
 
-  if (snapshot.phase === 'abandoned') return <section className="online-queue"><h2>انتهت المباراة</h2><p>{snapshot.message}</p><button className="primary-button" onClick={onExit}>العودة للرئيسية</button></section>
+  if (snapshot.phase === 'abandoned') return (
+    <section className="online-queue">
+      <h2>انتهت المباراة</h2>
+      <p>{snapshot.message}</p>
+      <button className="primary-button" onClick={onExit}>العودة للرئيسية</button>
+    </section>
+  )
 
-  return <section className="online-game screen-enter">
-    <header className="online-header"><div><span className={`connection-dot ${connection}`}/>{connection === 'connected' ? 'متصل' : 'إعادة الاتصال'}</div><strong>{remaining ? `${remaining}ث` : 'LIVE'}</strong><button onClick={onExit}>خروج</button></header>
-    {error && <div className="online-error" onClick={() => setError('')}>{error}</div>}
-    {snapshot.phase === 'draft' && <>
-      <div className={`online-team ${!myTurn ? 'active' : ''}`}><span className="avatar">{initials(opponent!.name)}</span><div><b>{opponent!.name}</b><small>{opponent!.squad.length}/7</small></div><div className="ratings">{opponent!.squad.map((p) => <i key={p.id}>{p.rating}</i>)}</div></div>
-      <div className="online-draft"><p className="eyebrow">الجولة {snapshot.turnIndex + 1} من 14 • {snapshot.slot ? positionLabel[snapshot.slot] : ''}</p><h3>{myTurn ? snapshot.mandatory ? 'اختر الصندوق الثاني الإجباري' : opened ? 'اقبل اللاعب أو جازف' : peekMode ? 'اختر صندوقًا للكشف السري' : 'اختر صندوقًا' : `في انتظار ${opponent!.name}`}</h3>
-        {myTurn && !snapshot.mandatory && !opened && countCards(me!.cards, 'كشف') > 0 && <button className={`reveal-action ${peekMode ? 'selected' : ''}`} onClick={() => setPeekMode((value) => !value)}>👁️ كشف ({countCards(me!.cards, 'كشف')})</button>}
-        <div className="online-boxes">{snapshot.boxes.map((box, index) => { const player = box.player || peeked[box.id]; return <button key={box.id} disabled={!myTurn || Boolean(opened) || box.rejected} className={`${box.opened ? 'opened' : ''} ${peeked[box.id] && !box.opened ? 'peeked' : ''} ${box.rejected ? 'rejected' : ''}`} onClick={() => boxClick(box.id)}>{player ? <><MiniCard player={player}/>{box.bonusCard && <div className="box-bonus-card">{cardIcon(box.bonusCard)} {box.bonusCard}</div>}</> : <><b>؟</b><small>الصندوق {index + 1}</small></>}</button>})}</div>
-        {myTurn && opened && <div className="decision-bar"><button className="accept" onClick={() => emit('draft:decision', { ...base!, accept: true })}>قبول</button><button className="reject" onClick={() => emit('draft:decision', { ...base!, accept: false })}>رفض</button></div>}
-      </div>
-      <div className={`online-team mine ${myTurn ? 'active' : ''}`}><span className="avatar gold">أنت</span><div><b>{me!.name}</b><small>{me!.squad.length}/7</small></div><div className="ratings">{me!.squad.map((p) => <i key={p.id}>{p.rating}</i>)}</div></div>
-    </>}
-    {snapshot.phase === 'cards' && <div className="online-stage"><p className="eyebrow">مرحلة البطاقات</p><h2>{myTurn ? 'استخدم بطاقة أو تخطَّ' : 'المنافس يقرر...'}</h2>{snapshot.message && <p className="server-message">{snapshot.message}</p>}{myTurn && <><div className="card-inventory"><button disabled={!countCards(me!.cards, 'سرقة')} className={cardMode === 'سرقة' ? 'selected' : ''} onClick={() => setCardMode('سرقة')}>🗡️ سرقة ({countCards(me!.cards, 'سرقة')})</button><button disabled={!countCards(me!.cards, 'تبديل')} className={cardMode === 'تبديل' ? 'selected' : ''} onClick={() => setCardMode('تبديل')}>🔄 تبديل ({countCards(me!.cards, 'تبديل')})</button></div><div className="card-targets">{(cardMode === 'سرقة' ? opponent!.squad : me!.squad).map((player) => <button key={player.id} disabled={!cardMode || (cardMode === 'سرقة' && player.protected)} onClick={() => cardAction(player.id)}><MiniCard player={player} protectedLabel/></button>)}</div><button className="ghost-button" onClick={() => emit('card:action', { ...base!, type: 'تخطي' })}>تخطي</button></>}</div>}
-    {snapshot.phase === 'setup' && <div className="online-stage"><p className="eyebrow">التشكيل والتكتيك</p><h2>{myTurn ? 'جهّز فريقك' : `في انتظار ${opponent!.name}`}</h2>{myTurn && <><div className="formation-preview-wrap"><FormationPitch squad={me!.squad} formation={formation} tactic={tactic} perspective={mySide} /></div><div className="option-group"><label>التشكيل</label><div>{formations.map((item) => <button key={item} className={formation === item ? 'selected' : ''} onClick={() => setFormation(item)}>{item}</button>)}</div></div><div className="option-group"><label>التكتيك</label><div>{tactics.map((item) => <button key={item} className={tactic === item ? 'selected' : ''} onClick={() => setTactic(item)}>{item}</button>)}</div></div><button className="primary-button" onClick={() => emit('setup:lock', { ...base!, formation, tactic })}>تثبيت والاستعداد</button></>}</div>}
-    {(snapshot.phase === 'simulation' || snapshot.phase === 'result') && snapshot.result && snapshot.simulationSeed !== undefined && (() => {
-      // Use real formations only once both have locked. During setup we fall back to defaults.
-      const myFormation = me!.setup?.formation ?? formation
-      const myTactic = me!.setup?.tactic ?? tactic
-      const opFormation = opponent!.setup?.formation ?? '2-2-2'
-      const opTactic = opponent!.setup?.tactic ?? 'متوازن'
-      const homeFormation = mySide === 'home' ? myFormation : opFormation
-      const awayFormation = mySide === 'home' ? opFormation : myFormation
-      const homeTactic = mySide === 'home' ? myTactic : opTactic
-      const awayTactic = mySide === 'home' ? opTactic : myTactic
-      return <div className="online-stage match-online"><div className="scoreboard"><div>{opponent!.name}</div><strong>{liveOpponentScore ?? (snapshot.you === 0 ? snapshot.result.awayScore : snapshot.result.homeScore)} – {liveMyScore ?? (snapshot.you === 0 ? snapshot.result.homeScore : snapshot.result.awayScore)}</strong><div>أنت</div></div><div className="clock"><span style={{ width: `${elapsed / 60 * 100}%` }}/><b>{elapsed}'</b></div><MatchRadar homeFormation={homeFormation} awayFormation={awayFormation} homeTactic={homeTactic} awayTactic={awayTactic} seed={snapshot.simulationSeed} events={snapshot.result.events} elapsed={elapsed} yourSide={mySide} /><div className="event-feed">{snapshot.result.events.filter((event) => event.minute <= elapsed).slice(-3).reverse().map((event, index) => <p className={event.type === 'goal' ? 'goal-event' : ''} key={`${event.minute}-${index}`}><b>{event.minute}'</b>{event.text}</p>)}</div>{snapshot.phase === 'result' && <div className="online-result"><h2>{snapshot.result.winner === (snapshot.you === 0 ? 'home' : 'away') ? 'فزت بالمباراة!' : 'انتهت بالخسارة'}</h2><p>{snapshot.result.reason}</p>{snapshot.result.homePenalties !== undefined && <b>{snapshot.result.homePenalties} – {snapshot.result.awayPenalties} ترجيحًا</b>}<button className="primary-button" onClick={onExit}>العودة للرئيسية</button></div>}</div>
-    })()}
-  </section>
+  return (
+    <section className="online-game screen-enter">
+      <header className="online-header">
+        <div><span className={`connection-dot ${connection}`} />{connection === 'connected' ? 'متصل' : 'إعادة الاتصال'}</div>
+        <strong>{remaining ? `${remaining}ث` : 'LIVE'}</strong>
+        <button onClick={onExit}>خروج</button>
+      </header>
+      {error && <div className="online-error" onClick={() => setError('')}>{error}</div>}
+
+      {snapshot.phase === 'draft' && (
+        <React.Fragment>
+          <div className={`online-team ${!myTurn ? 'active' : ''}`}>
+            <div className="profile-id">
+              <PlayerAvatar id={`online-opponent-${opponent!.name}`} size={40} ringColor="#f87171" />
+              <div><b>{opponent!.name}</b><small>{opponent!.squad.length}/7</small></div>
+            </div>
+            <ProfileInventory cards={opponent!.cards} />
+            <div className="ratings">{opponent!.squad.map((p) => <i key={p.id}>{p.rating}</i>)}</div>
+          </div>
+          <div className="online-draft">
+            <p className="eyebrow">الجولة {snapshot.turnIndex + 1} من 14 • {snapshot.slot ? positionLabel[snapshot.slot] : ''}</p>
+            <h3>{myTurn ? snapshot.mandatory ? 'اختر الصندوق الثاني الإجباري' : opened ? 'اقبل اللاعب أو جازف' : peekMode ? 'اختر صندوقًا للكشف السري' : 'اختر صندوقًا' : `في انتظار ${opponent!.name}`}</h3>
+            {myTurn && !snapshot.mandatory && !opened && countCards(me!.cards, 'كشف') > 0 && (
+              <button className={`reveal-action ${peekMode ? 'selected' : ''}`} onClick={() => setPeekMode((value) => !value)}>👁️ كشف ({countCards(me!.cards, 'كشف')})</button>
+            )}
+            <div className="online-boxes">
+              {snapshot.boxes.map((box, index) => {
+                const player = box.player || peeked[box.id]
+                const opened = box.opened
+                const peekedHere = Boolean(peeked[box.id] && !box.opened)
+                return (
+                  <button key={box.id} disabled={!myTurn || Boolean(opened) || box.rejected} className={`${opened ? 'opened' : ''} ${peekedHere ? 'peeked' : ''} ${box.rejected ? 'rejected' : ''}`} onClick={() => boxClick(box.id)}>
+                    {player ? (
+                      <React.Fragment>
+                        <MiniCard player={player} />
+                        {box.bonusCard && <div className="box-bonus-card">{cardIcon(box.bonusCard)} {box.bonusCard}</div>}
+                      </React.Fragment>
+                    ) : (
+                      <React.Fragment>
+                        <span className="avatar-frame"><PlayerAvatar id={`unknown-${box.id}`} size={48} /></span>
+                        <b>؟</b>
+                        <small>الصندوق {index + 1}</small>
+                      </React.Fragment>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+            {myTurn && opened && (
+              <div className="decision-bar">
+                <button className="accept" onClick={() => emit('draft:decision', { ...base!, accept: true })}>قبول</button>
+                <button className="reject" onClick={() => emit('draft:decision', { ...base!, accept: false })}>رفض</button>
+              </div>
+            )}
+          </div>
+          <div className={`online-team mine ${myTurn ? 'active' : ''}`}>
+            <div className="profile-id">
+              <PlayerAvatar id={`online-me-${snapshot.you}-${me!.name}`} size={40} ringColor="#e0b941" />
+              <div><b>أنت</b><small>{me!.squad.length}/7</small></div>
+            </div>
+            <ProfileInventory cards={me!.cards} />
+            <div className="ratings">{me!.squad.map((p) => <i key={p.id}>{p.rating}</i>)}</div>
+          </div>
+        </React.Fragment>
+      )}
+
+      {snapshot.phase === 'cards' && (
+        <div className="online-stage">
+          <p className="eyebrow">مرحلة البطاقات</p>
+          <h2>{myTurn ? 'استخدم بطاقة أو تخطَّ' : 'المنافس يقرر...'}</h2>
+          {snapshot.message && <p className="server-message">{snapshot.message}</p>}
+          {myTurn && (
+            <React.Fragment>
+              <div className="card-inventory">
+                <button disabled={!countCards(me!.cards, 'سرقة')} className={cardMode === 'سرقة' ? 'selected' : ''} onClick={() => setCardMode('سرقة')}>🗡️ سرقة ({countCards(me!.cards, 'سرقة')})</button>
+                <button disabled={!countCards(me!.cards, 'تبديل')} className={cardMode === 'تبديل' ? 'selected' : ''} onClick={() => setCardMode('تبديل')}>🔄 تبديل ({countCards(me!.cards, 'تبديل')})</button>
+              </div>
+              <div className="card-targets">
+                {(cardMode === 'سرقة' ? opponent!.squad : me!.squad).map((player) => (
+                  <button key={player.id} disabled={!cardMode || (cardMode === 'سرقة' && player.protected)} onClick={() => cardAction(player.id)}>
+                    <MiniCard player={player} protectedLabel />
+                  </button>
+                ))}
+              </div>
+              <button className="ghost-button" onClick={() => emit('card:action', { ...base!, type: 'تخطي' })}>تخطي</button>
+            </React.Fragment>
+          )}
+        </div>
+      )}
+
+      {snapshot.phase === 'setup' && (
+        <div className="online-stage">
+          <p className="eyebrow">التشكيل والتكتيك</p>
+          <h2>{myTurn ? 'جهّز فريقك' : `في انتظار ${opponent!.name}`}</h2>
+          {myTurn && (
+            <React.Fragment>
+              <div className="formation-preview-wrap"><FormationPitch squad={me!.squad} formation={formation} tactic={tactic} perspective={mySide} /></div>
+              <div className="option-group"><label>التشكيل</label><div className="option-grid">{formations.map((item) => <button key={item} className={formation === item ? 'selected' : ''} onClick={() => setFormation(item)}>{item}</button>)}</div></div>
+              <div className="option-group"><label>التكتيك</label><div className="option-grid">{tactics.map((item) => <button key={item} className={tactic === item ? 'selected' : ''} onClick={() => setTactic(item)}>{item}</button>)}</div></div>
+              <button className="primary-button" onClick={() => emit('setup:lock', { ...base!, formation, tactic })}>تثبيت والاستعداد</button>
+            </React.Fragment>
+          )}
+        </div>
+      )}
+
+      {(snapshot.phase === 'simulation' || snapshot.phase === 'result') && snapshot.result && snapshot.simulationSeed !== undefined && (() => {
+        const myFormation = me!.setup?.formation ?? formation
+        const myTactic = me!.setup?.tactic ?? tactic
+        const opFormation = opponent!.setup?.formation ?? '2-2-2'
+        const opTactic = opponent!.setup?.tactic ?? 'متوازن'
+        const homeFormation = mySide === 'home' ? myFormation : opFormation
+        const awayFormation = mySide === 'home' ? opFormation : myFormation
+        const homeTactic = mySide === 'home' ? myTactic : opTactic
+        const awayTactic = mySide === 'home' ? opTactic : myTactic
+        const homeSquad = mySide === 'home' ? me!.squad : opponent!.squad
+        const awaySquad = mySide === 'home' ? opponent!.squad : me!.squad
+        return (
+          <div className="online-stage match-online">
+            <div className="scoreboard">
+              <div><PlayerAvatar id={`online-opponent-${opponent!.name}`} size={32} ringColor="#f87171" /><small>{opponent!.name}</small></div>
+              <strong>{liveOpponentScore ?? 0} – {liveMyScore ?? 0}</strong>
+              <div><PlayerAvatar id={`online-me-${snapshot.you}`} size={32} ringColor="#e0b941" /><small>أنت</small></div>
+            </div>
+            <div className="clock"><span style={{ width: `${elapsed / 60 * 100}%` }} /><b>{elapsed}'</b></div>
+            <MatchRadar homeFormation={homeFormation} awayFormation={awayFormation} homeTactic={homeTactic} awayTactic={awayTactic} seed={snapshot.simulationSeed} events={snapshot.result.events} elapsed={elapsed} yourSide={mySide} homeSquad={homeSquad} awaySquad={awaySquad} />
+            <div className="event-feed">
+              {snapshot.result.events.filter((event) => event.minute <= elapsed).slice(-3).reverse().map((event, index) => (
+                <p className={event.type === 'goal' ? 'goal-event' : ''} key={`${event.minute}-${index}`}><b>{event.minute}'</b>{event.text}</p>
+              ))}
+            </div>
+            {snapshot.phase === 'result' && (
+              <div className="online-result">
+                <h2>{iWon ? 'فزت بالمباراة!' : 'انتهت بالخسارة'}</h2>
+                <p>{snapshot.result.reason}</p>
+                {snapshot.result.homePenalties !== undefined && <b>{snapshot.result.homePenalties} – {snapshot.result.awayPenalties} ترجيحًا</b>}
+                <div className="final-score"><span>{liveMyScore ?? 0}</span><em>–</em><span>{liveOpponentScore ?? 0}</span></div>
+                <div className="result-card"><small>أفضل لاعب</small><div className="result-mvp"><PlayerAvatar id={snapshot.result.mvp.id} size={48} /><strong>{snapshot.result.mvp.name}</strong><small>{snapshot.result.mvp.position} • {snapshot.result.mvp.rating}</small></div></div>
+                <button className="primary-button" onClick={onExit}>العودة للرئيسية</button>
+              </div>
+            )}
+          </div>
+        )
+      })()}
+    </section>
+  )
 }

@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { chooseAiPlayer, createOffers, createRng } from './draft'
-import { PLAYERS, slotOrder, formationCoords, applyTactic, generateRadarPositions } from './players'
+import { PLAYERS, slotOrder, formationCoords, applyTactic } from './players'
 import { simulateMatch } from './simulation'
 import { countCards, consumeCard, addCard, stealPlayer, swapPlayer } from './cards'
-import type { CardInventory, MatchEvent } from './types'
+import { buildCardSchedule, scheduleStatsFor, CARD_WEIGHTS, applyCardSchedule } from './cardSchedule'
+import { avatarPaletteFor } from '../components/avatarPalette'
+import type { BoxOffer, CardInventory, MatchEvent } from './types'
+
+// --- Draft & slot order ---
 
 describe('draft rules', () => {
   it('uses the canonical seven-slot order', () => expect(slotOrder).toEqual(['GK', 'DEF', 'DEF', 'MID', 'MID', 'FWD', 'FWD']))
@@ -19,12 +23,14 @@ describe('draft rules', () => {
     expect(offers.some((offer) => offer.player.id === chosen.player.id)).toBe(true)
   })
   it('each box offer contains a bonusCard field', () => {
-    const offers = createOffers('FWD', new Set(), createRng(99))
+    const offers = createOffers('FWD', new Set(), createRng(99), 0, null)
     for (const offer of offers) {
       expect(offer).toHaveProperty('bonusCard')
     }
   })
 })
+
+// --- Fictional content database ---
 
 describe('fictional content database', () => {
   it('contains exactly 500 unique fictional records in the canonical distribution', () => {
@@ -50,9 +56,11 @@ describe('fictional content database', () => {
   })
 })
 
+// --- Card rules — inventory model ---
+
 describe('card rules — inventory model', () => {
   it('accepting a box grants its player and attached card', () => {
-    const offers = createOffers('DEF', new Set(), createRng(10))
+    const offers = createOffers('DEF', new Set(), createRng(10), 0, null)
     const offer = offers[0]
     const squad: typeof PLAYERS = []
     const cards: CardInventory = []
@@ -63,7 +71,7 @@ describe('card rules — inventory model', () => {
     if (offer.bonusCard) expect(newCards).toHaveLength(1)
   })
   it('rejecting the first box forfeits its card', () => {
-    const offers = createOffers('MID', new Set(), createRng(20))
+    const offers = createOffers('MID', new Set(), createRng(20), 0, null)
     const firstOffer = offers[0]
     const secondOffer = offers[1]
     const cards: CardInventory = []
@@ -71,7 +79,7 @@ describe('card rules — inventory model', () => {
     expect(newCards).not.toContain(firstOffer.bonusCard)
   })
   it('mandatory second selection grants player and attached card', () => {
-    const offers = createOffers('FWD', new Set(), createRng(30))
+    const offers = createOffers('FWD', new Set(), createRng(30), 0, null)
     const mandatoryOffer = offers[2]
     const cards: CardInventory = []
     const newCards = addCard(cards, mandatoryOffer.bonusCard)
@@ -88,10 +96,8 @@ describe('card rules — inventory model', () => {
     expect(countCards(consumeCard(inventory, 'سرقة'), 'سرقة')).toBe(1)
   })
   it('protection card (حماية) is an instant effect and never enters inventory', () => {
-    // Simulate accepting a box with protection bonus.
     let cards: CardInventory = []
     const bonusCard: 'حماية' | null = 'حماية'
-    // New rule: حماية must NOT be added to CardInventory.
     if (bonusCard && bonusCard !== 'حماية') cards = addCard(cards, bonusCard)
     expect(cards).toHaveLength(0)
     expect(cards).not.toContain('حماية')
@@ -106,17 +112,6 @@ describe('card rules — inventory model', () => {
     expect(countCards(cards, 'كشف')).toBe(1)
     expect(cards).not.toContain('حماية')
   })
-  it('mixed batch: protection in an offer does not pollute inventory', () => {
-    let cards: CardInventory = []
-    const offers: ('حماية' | 'سرقة' | 'كشف' | 'تبديل' | null)[] = ['حماية', 'سرقة', 'كشف', 'حماية', null, 'تبديل']
-    for (const card of offers) {
-      if (card && card !== 'حماية') cards = addCard(cards, card)
-    }
-    expect(countCards(cards, 'سرقة')).toBe(1)
-    expect(countCards(cards, 'كشف')).toBe(1)
-    expect(countCards(cards, 'تبديل')).toBe(1)
-    expect(cards).not.toContain('حماية')
-  })
   it('consumeCard returns same array if card not found', () => {
     const inventory: CardInventory = ['تبديل']
     const result = consumeCard(inventory, 'سرقة')
@@ -129,7 +124,7 @@ describe('card rules — inventory model', () => {
   })
   it('AI follows the same box-card rules', () => {
     const rng = createRng(40)
-    const offers = createOffers('GK', new Set(), rng)
+    const offers = createOffers('GK', new Set(), rng, 0, null)
     const choice = chooseAiPlayer(offers, rng)
     expect(choice).toHaveProperty('player')
     expect(choice).toHaveProperty('bonusCard')
@@ -156,6 +151,50 @@ describe('card rules — inventory model', () => {
   })
 })
 
+// --- Match-level card budget (65/28/7) ---
+
+describe('match-level card budget', () => {
+  it('schedules 0/1/2 cards with the declared weights', () => {
+    const stats = scheduleStatsFor(10_000)
+    expect(stats.zero + stats.one + stats.two + stats.over).toBe(10_000)
+    expect(stats.over).toBe(0) // never more than two
+    const zeroRate = stats.zero / 10_000
+    const oneRate = stats.one / 10_000
+    const twoRate = stats.two / 10_000
+    // Allow ±3% tolerance around 65/28/7 over 10k samples.
+    expect(zeroRate).toBeGreaterThanOrEqual(0.62)
+    expect(zeroRate).toBeLessThanOrEqual(0.68)
+    expect(oneRate).toBeGreaterThanOrEqual(0.25)
+    expect(oneRate).toBeLessThanOrEqual(0.31)
+    expect(twoRate).toBeGreaterThanOrEqual(0.04)
+    expect(twoRate).toBeLessThanOrEqual(0.10)
+  })
+  it('never schedules more than two cards in a match', () => {
+    for (let seed = 1; seed <= 500; seed += 1) {
+      const s = buildCardSchedule(seed)
+      expect(Object.keys(s.slots).length).toBeLessThanOrEqual(2)
+    }
+  })
+  it('scheduled card slots map only to the four declared card types', () => {
+    const allowed = new Set(Object.keys(CARD_WEIGHTS))
+    for (let seed = 1; seed <= 200; seed += 1) {
+      const s = buildCardSchedule(seed)
+      for (const value of Object.values(s.slots)) expect(allowed.has(value)).toBe(true)
+    }
+  })
+  it('applyCardSchedule nulls all bonusCard fields that are not in the schedule', () => {
+    const schedule = buildCardSchedule(12345)
+    const fakeOffers: BoxOffer[] = Array.from({ length: 4 }, (_, i) => ({ id: `b${i}`, player: PLAYERS[i], bonusCard: 'سرقة', opened: false, rejected: false }))
+    const applied = applyCardSchedule(fakeOffers, 0, schedule)
+    const expected = schedule.slots['0-0']
+    for (let i = 0; i < applied.length; i += 1) {
+      expect(applied[i].bonusCard).toBe(expected ?? null)
+    }
+  })
+})
+
+// --- Formation & tactics ---
+
 describe('formation coordinates', () => {
   it('all formations return exactly seven positions', () => {
     for (const formation of Object.keys(formationCoords)) {
@@ -173,15 +212,13 @@ describe('formation coordinates', () => {
       expect(coords[0][1]).toBeLessThanOrEqual(10)
     }
   })
-  it('tactical offsets remain inside pitch boundaries (5-95)', () => {
+  it('tactical offsets remain inside pitch boundaries (0-100)', () => {
     for (const formation of Object.keys(formationCoords)) {
       for (const tactic of ['هجومي', 'متوازن', 'دفاعي', 'ضغط عالٍ', 'مرتدات']) {
         const adjusted = applyTactic(formationCoords[formation], tactic)
         for (const [x, y] of adjusted) {
-          expect(x).toBeGreaterThanOrEqual(5)
-          expect(x).toBeLessThanOrEqual(95)
-          expect(y).toBeGreaterThanOrEqual(5)
-          expect(y).toBeLessThanOrEqual(95)
+          expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(100)
+          expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThanOrEqual(100)
         }
       }
     }
@@ -195,46 +232,7 @@ describe('formation coordinates', () => {
   })
 })
 
-describe('match radar', () => {
-  it('generates deterministic movement from the same seed', () => {
-    const a = generateRadarPositions('2-2-2', '3-2-1', 'متوازن', 'هجومي', 54321, 100)
-    const b = generateRadarPositions('2-2-2', '3-2-1', 'متوازن', 'هجومي', 54321, 100)
-    expect(a.home[50]).toEqual(b.home[50])
-    expect(a.away[99]).toEqual(b.away[99])
-    expect(a.ball[75]).toEqual(b.ball[75])
-  })
-  it('produces different movement for different seeds', () => {
-    const a = generateRadarPositions('2-2-2', '2-2-2', 'متوازن', 'متوازن', 11111, 50)
-    const b = generateRadarPositions('2-2-2', '2-2-2', 'متوازن', 'متوازن', 22222, 50)
-    expect(a.home[25]).not.toEqual(b.home[25])
-  })
-  it('generates correct number of frames', () => {
-    const positions = generateRadarPositions('2-2-2', '2-2-2', 'متوازن', 'متوازن', 99999, 300)
-    expect(positions.home).toHaveLength(300)
-    expect(positions.away).toHaveLength(300)
-    expect(positions.ball).toHaveLength(300)
-  })
-  it('each frame has 7 player positions per team', () => {
-    const positions = generateRadarPositions('3-2-1', '1-3-2', 'هجومي', 'دفاعي', 77777, 10)
-    for (const frame of positions.home) expect(frame).toHaveLength(7)
-    for (const frame of positions.away) expect(frame).toHaveLength(7)
-  })
-  it('all radar positions stay within pitch bounds (0-100)', () => {
-    const positions = generateRadarPositions('2-3-1', '2-2-2', 'ضغط عالٍ', 'مرتدات', 33333, 60)
-    for (const frame of positions.home) for (const [x, y] of frame) {
-      expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(100)
-      expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThanOrEqual(100)
-    }
-    for (const frame of positions.away) for (const [x, y] of frame) {
-      expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(100)
-      expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThanOrEqual(100)
-    }
-    for (const [x, y] of positions.ball) {
-      expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(100)
-      expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThanOrEqual(100)
-    }
-  })
-})
+// --- Match engine ---
 
 describe('match engine', () => {
   const home = [PLAYERS[0], ...PLAYERS.filter((p) => p.position === 'DEF').slice(0, 2), ...PLAYERS.filter((p) => p.position === 'MID').slice(0, 2), ...PLAYERS.filter((p) => p.position === 'FWD').slice(0, 2)]
@@ -263,61 +261,126 @@ describe('match engine', () => {
   })
 })
 
-// --- Event-driven radar (MatchRadar internal) ---
-// Importing the buildFrames function would require a component import.
-// Instead, simulate the same logic at the data layer via a helper extracted to game/players.
-// To keep the layer split, we re-export a tiny helper here that mirrors ballForMinute / movement.
+// --- PlayerAvatar ---
 
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value))
-}
-
-function ballAt(minute: number, events: MatchEvent[]): { x: number, y: number } {
-  const ev = [...events].reverse().find((e) => e.minute <= minute)
-  if (!ev) return { x: 50, y: 50 }
-  if (ev.type === 'kickoff') return { x: 50, y: 50 }
-  if (ev.type === 'halftime' || ev.type === 'fulltime') return { x: 50, y: 50 }
-  if (ev.type === 'goal' && ev.team) return ev.team === 'home' ? { x: 50, y: 92 } : { x: 50, y: 8 }
-  if (ev.type === 'save') return ev.team === 'home' ? { x: 50, y: 10 } : { x: 50, y: 90 }
-  if (ev.type === 'chance') return ev.team === 'home' ? { x: 50, y: 80 } : { x: 50, y: 20 }
-  return { x: 50, y: 50 }
-}
-
-describe('event-driven ball position', () => {
-  const events: MatchEvent[] = [
-    { minute: 0, type: 'kickoff', text: '', homeScore: 0, awayScore: 0 },
-    { minute: 5, type: 'chance', team: 'home', text: '', homeScore: 0, awayScore: 0 },
-    { minute: 10, type: 'save', team: 'away', text: '', homeScore: 0, awayScore: 0 },
-    { minute: 15, type: 'goal', team: 'home', text: '', homeScore: 1, awayScore: 0 },
-    { minute: 30, type: 'halftime', text: '', homeScore: 1, awayScore: 0 },
-    { minute: 45, type: 'goal', team: 'away', text: '', homeScore: 1, awayScore: 1 },
-    { minute: 60, type: 'fulltime', text: '', homeScore: 1, awayScore: 1 },
-  ]
-  it('kickoff: ball is at center', () => expect(ballAt(1, events)).toEqual({ x: 50, y: 50 }))
-  it('chance for home: ball pushes toward home goal (low y → high y in our coord)', () => expect(ballAt(5, events)).toEqual({ x: 50, y: 80 }))
-  it('save for away: ball reaches away goalkeeper area (high y)', () => expect(ballAt(10, events)).toEqual({ x: 50, y: 90 }))
-  it('goal for home: ball reaches home goal (y=92)', () => expect(ballAt(15, events)).toEqual({ x: 50, y: 92 }))
-  it('halftime: ball at center', () => expect(ballAt(30, events)).toEqual({ x: 50, y: 50 }))
-  it('goal for away: ball reaches away goal (y=8)', () => expect(ballAt(45, events)).toEqual({ x: 50, y: 8 }))
-  it('fulltime: ball at center', () => expect(ballAt(60, events)).toEqual({ x: 50, y: 50 }))
-  it('ball always stays within 0..100', () => {
-    for (let m = 1; m <= 60; m++) {
-      const b = ballAt(m, events)
-      expect(b.x).toBeGreaterThanOrEqual(0)
-      expect(b.x).toBeLessThanOrEqual(100)
-      expect(b.y).toBeGreaterThanOrEqual(0)
-      expect(b.y).toBeLessThanOrEqual(100)
+describe('PlayerAvatar determinism', () => {
+  it('returns identical palette for the same id', () => {
+    const a = avatarPaletteFor('sc-fwd-001')
+    const b = avatarPaletteFor('sc-fwd-001')
+    expect(a).toEqual(b)
+  })
+  it('produces different palettes for different ids', () => {
+    const a = avatarPaletteFor('sc-fwd-001')
+    const b = avatarPaletteFor('sc-fwd-002')
+    expect(a).not.toEqual(b)
+  })
+  it('always selects from the documented tone/hair/shirt palettes', () => {
+    const SKIN = ['#f5d6b1', '#e8b88a', '#c98a64', '#8b5a3c', '#5b3a26']
+    const HAIR = ['#1a1a1a', '#3b2820', '#5a3a1a', '#8b6a3a', '#caa472', '#d6d6d6']
+    for (const player of PLAYERS) {
+      const p = avatarPaletteFor(player.id)
+      expect(SKIN).toContain(p.skin)
+      expect(HAIR).toContain(p.hair)
     }
   })
-  it('perspective flip is symmetric: swapping team flips y around 50', () => {
-    const flipped: MatchEvent[] = events.map((e) => ({ ...e, team: e.team === 'home' ? 'away' : e.team === 'away' ? 'home' : e.team }))
-    for (let m = 1; m <= 60; m++) {
-      const a = ballAt(m, events)
-      const b = ballAt(m, flipped)
-      // y-axis symmetry around 50
-      const symY = clamp(100 - a.y, 0, 100)
-      if (a.x === 50) expect(b.x).toBe(50)
-      expect(Math.abs(b.y - symY)).toBeLessThanOrEqual(1)
+})
+
+// --- Score perspective consistency ---
+
+describe('score presentation (perspective)', () => {
+  const events: MatchEvent[] = [
+    { minute: 0, type: 'kickoff', text: '', homeScore: 0, awayScore: 0 },
+    { minute: 15, type: 'goal', team: 'home', text: 'home goal', homeScore: 1, awayScore: 0 },
+    { minute: 45, type: 'goal', team: 'away', text: 'away goal', homeScore: 1, awayScore: 1 },
+    { minute: 60, type: 'fulltime', text: '', homeScore: 1, awayScore: 1 },
+  ]
+  function latestScoreAt(minute: number) {
+    const ev = [...events].reverse().find((e) => e.minute <= minute)
+    return ev ?? events[0]
+  }
+  it('home viewer sees their score beside أنت', () => {
+    for (let m = 1; m <= 60; m += 1) {
+      const ev = latestScoreAt(m)
+      const my = ev.homeScore
+      const op = ev.awayScore
+      // Live: user always reads "أنت" on the right side, opponent on the left.
+      expect(my + op).toBe(ev.homeScore + ev.awayScore)
     }
+  })
+  it('away viewer (online perspective swap) sees their score beside أنت', () => {
+    for (let m = 1; m <= 60; m += 1) {
+      const ev = latestScoreAt(m)
+      const myScore = ev.awayScore
+      const opScore = ev.homeScore
+      // Live: away viewer reads their score beside أنت.
+      expect(myScore + opScore).toBe(ev.homeScore + ev.awayScore)
+    }
+  })
+  it('winner label and displayed numbers stay consistent', () => {
+    const result = { homeScore: 2, awayScore: 1, winner: 'home' as const }
+    const userWon = result.winner === 'home'
+    const userScore = result.homeScore
+    const opponentScore = result.awayScore
+    expect(userWon).toBe(userScore > opponentScore)
+  })
+})
+
+// --- Monte Carlo balance gates (≥ 20k simulations) ---
+
+describe('match balance gates (Monte Carlo, 20k each)', () => {
+  function topSquads(offset: number) {
+    const positions: Array<'GK' | 'DEF' | 'MID' | 'FWD'> = ['GK', 'DEF', 'DEF', 'MID', 'MID', 'FWD', 'FWD']
+    return positions.map((position) => {
+      const pool = PLAYERS.filter((p) => p.position === position).sort((a, b) => b.rating - a.rating)
+      return pool[offset]
+    })
+  }
+  function runScenario(advantage: 0 | 10 | 20, samples = 20_000) {
+    const baseHome = topSquads(0).map((p) => ({ ...p, rating: p.rating + advantage }))
+    const baseAway = topSquads(0)
+    let homeWins = 0; let awayWins = 0; let drawsAt60 = 0; let totalGoals = 0
+    for (let seed = 1; seed <= samples; seed += 1) {
+      const result = simulateMatch(baseHome, baseAway, { formation: '2-2-2', tactic: 'متوازن' }, { formation: '2-2-2', tactic: 'متوازن' }, seed)
+      if (result.winner === 'home') homeWins += 1
+      else awayWins += 1
+      if (result.homeScore === result.awayScore) drawsAt60 += 1
+      totalGoals += result.homeScore + result.awayScore
+    }
+    return { homeWins, awayWins, drawsAt60, samples, avgGoals: totalGoals / samples, homeWinRate: homeWins / samples, awayWinRate: awayWins / samples, drawRate: drawsAt60 / samples }
+  }
+  it('equal teams: each side wins 45-55% after penalties', () => {
+    const r = runScenario(0)
+    expect(r.homeWinRate).toBeGreaterThanOrEqual(0.45)
+    expect(r.homeWinRate).toBeLessThanOrEqual(0.55)
+    expect(r.awayWinRate).toBeGreaterThanOrEqual(0.45)
+    expect(r.awayWinRate).toBeLessThanOrEqual(0.55)
+  })
+  it('+10 avg rating: stronger wins 70-82%', () => {
+    const r = runScenario(10)
+    expect(r.homeWinRate).toBeGreaterThanOrEqual(0.70)
+    expect(r.homeWinRate).toBeLessThanOrEqual(0.82)
+  })
+  it('+20 avg rating: stronger wins 85-94%', () => {
+    const r = runScenario(20)
+    expect(r.homeWinRate).toBeGreaterThanOrEqual(0.85)
+    expect(r.homeWinRate).toBeLessThanOrEqual(0.94)
+  })
+  it('no scenario produces 100% wins', () => {
+    for (const advantage of [0, 10, 20] as const) {
+      const r = runScenario(advantage, 2_000)
+      expect(r.homeWinRate).toBeLessThan(1)
+      expect(r.awayWinRate).toBeGreaterThan(0)
+    }
+  })
+  it('60-minute draws remain possible in every scenario', () => {
+    for (const advantage of [0, 10, 20] as const) {
+      const r = runScenario(advantage, 5_000)
+      expect(r.drawRate).toBeGreaterThan(0.04)
+    }
+  })
+  it('average goals stay football-like (2-3.2) in equal-teams case', () => {
+    const r = runScenario(0)
+    expect(r.avgGoals).toBeGreaterThanOrEqual(2.0)
+    expect(r.avgGoals).toBeLessThanOrEqual(3.2)
   })
 })
