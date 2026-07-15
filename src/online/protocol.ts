@@ -35,6 +35,7 @@ export interface OnlineSnapshot {
   deadline?: number
   message?: string
   result?: MatchResult
+  simulationSeed?: number
 }
 
 export interface ClientToServerEvents {

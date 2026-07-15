@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { chooseAiPlayer, createOffers, createRng } from './game/draft'
-import { positionLabel, slotOrder, formationCoords, applyTactic, generateRadarPositions } from './game/players'
+import { positionLabel, slotOrder } from './game/players'
 import { simulateMatch } from './game/simulation'
 import { countCards, chooseAiCardAction, consumeCard, addCard, stealPlayer, swapPlayer } from './game/cards'
 import type { BoxOffer, CardInventory, CardType, Formation, MatchResult, Player, SquadSetup, Tactic } from './game/types'
+import { FormationPitch } from './components/FormationPitch'
+import { MatchRadar } from './components/MatchRadar'
 import OnlineGame from './OnlineGame'
 
 type Screen = 'home' | 'online' | 'searching' | 'draft' | 'cards' | 'formation' | 'simulation' | 'result'
@@ -30,65 +32,6 @@ function PlayerCard({ player, compact = false }: { player: Player; compact?: boo
 function BonusCardBadge({ card }: { card: CardType }) {
   if (!card) return null
   return <div className="box-bonus-card">{cardIcon(card)} {card}</div>
-}
-
-function FormationPitch({ squad, formation, tactic }: { squad: Player[]; formation: string; tactic: string }) {
-  const coords = useMemo(() => applyTactic(formationCoords[formation] ?? formationCoords['2-2-2'], tactic), [formation, tactic])
-  return <div className="mini-pitch">
-    {squad.map((player, i) => {
-      const [x, y] = coords[i] ?? [50, 50]
-      return <span key={player.id} className="formation-marker" style={{ left: `${x}%`, top: `${y}%`, transform: 'translate(-50%,-50%)', position: 'absolute', zIndex: 2, width: 46, height: 46, borderRadius: '50%', background: '#111c17', border: '2px solid var(--gold)', display: 'grid', placeItems: 'center', fontSize: 9, transition: 'left 0.5s ease, top 0.5s ease' }}><b style={{ fontSize: 12, color: 'var(--gold)' }}>{player.rating}</b>{initials(player.name)}</span>
-    })}
-  </div>
-}
-
-function MatchRadar({ homeFormation, awayFormation, homeTactic, awayTactic, seed, elapsed }: { homeFormation: string; awayFormation: string; homeTactic: string; awayTactic: string; seed: number; elapsed: number }) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const homeRefs = useRef<(HTMLDivElement | null)[]>([])
-  const awayRefs = useRef<(HTMLDivElement | null)[]>([])
-  const ballRef = useRef<HTMLDivElement | null>(null)
-  const positionsRef = useRef<ReturnType<typeof generateRadarPositions> | null>(null)
-
-  if (!positionsRef.current) {
-    positionsRef.current = generateRadarPositions(homeFormation, awayFormation, homeTactic, awayTactic, seed, 60)
-  }
-
-  useEffect(() => {
-    const positions = positionsRef.current
-    if (!positions) return
-    const frame = Math.min(elapsed, positions.home.length - 1)
-    const homeFrame = positions.home[frame]
-    const awayFrame = positions.away[frame]
-    const ballFrame = positions.ball[frame]
-    if (homeFrame) homeRefs.current.forEach((el, i) => {
-      if (el && homeFrame[i]) {
-        el.style.left = `${homeFrame[i][0]}%`
-        el.style.top = `${homeFrame[i][1]}%`
-      }
-    })
-    if (awayFrame) awayRefs.current.forEach((el, i) => {
-      if (el && awayFrame[i]) {
-        el.style.left = `${awayFrame[i][0]}%`
-        el.style.top = `${awayFrame[i][1]}%`
-      }
-    })
-    if (ballFrame && ballRef.current) {
-      ballRef.current.style.left = `${ballFrame[0]}%`
-      ballRef.current.style.top = `${ballFrame[1]}%`
-    }
-  }, [elapsed])
-
-  const initialHome = positionsRef.current.home[0] ?? Array(7).fill([50, 30])
-  const initialAway = positionsRef.current.away[0] ?? Array(7).fill([50, 70])
-
-  return <div className="match-pitch" ref={containerRef}>
-    <div className="ball-radar" ref={ballRef} style={{ position: 'absolute', zIndex: 5, width: 12, height: 12, borderRadius: '50%', background: '#fff', left: '50%', top: '50%', transition: 'left 0.8s linear, top 0.8s linear' }} />
-    {initialHome.map((pos, i) => <div key={`h${i}`} ref={(el) => { homeRefs.current[i] = el }} className="radar-dot home-dot" style={{ position: 'absolute', zIndex: 3, width: 30, height: 30, borderRadius: '50%', background: '#162419', border: '2px solid var(--gold)', display: 'grid', placeItems: 'center', fontSize: 8, fontWeight: 900, color: 'var(--bright)', left: `${pos[0]}%`, top: `${pos[1]}%`, transform: 'translate(-50%,-50%)', transition: 'left 0.8s linear, top 0.8s linear' }}><i style={{ fontStyle: 'normal', fontSize: 8 }}>{i + 1}</i></div>)}
-    {initialAway.map((pos, i) => <div key={`a${i}`} ref={(el) => { awayRefs.current[i] = el }} className="radar-dot away-dot" style={{ position: 'absolute', zIndex: 3, width: 30, height: 30, borderRadius: '50%', background: '#381516', border: '2px solid #f87171', display: 'grid', placeItems: 'center', fontSize: 8, fontWeight: 900, color: '#fca5a5', left: `${pos[0]}%`, top: `${pos[1]}%`, transform: 'translate(-50%,-50%)', transition: 'left 0.8s linear, top 0.8s linear' }}><i style={{ fontStyle: 'normal', fontSize: 8 }}>{i + 1}</i></div>)}
-    <div className="center-circle" /><div className="half-line" />
-    <div style={{ position: 'absolute', left: '35%', top: 0, width: '30%', height: '8%', border: '1px solid rgba(255,255,255,.18)', borderBottom: 'none', borderRadius: '0 0 50% 50%' }} />
-    <div style={{ position: 'absolute', left: '35%', bottom: 0, width: '30%', height: '8%', border: '1px solid rgba(255,255,255,.18)', borderTop: 'none', borderRadius: '50% 50% 0 0' }} />
-  </div>
 }
 
 function App() {
@@ -143,7 +86,7 @@ function App() {
         const player = choice.bonusCard === 'حماية' ? { ...choice.player, protected: true } : choice.player
         usedIds.current.add(player.id)
         setAiSquad((squad) => [...squad, player])
-        if (choice.bonusCard) setAiCards((cards) => addCard(cards, choice.bonusCard))
+        if (choice.bonusCard && choice.bonusCard !== 'حماية') setAiCards((cards) => addCard(cards, choice.bonusCard))
         setTurnIndex((turn) => turn + 1)
       }, 1100)
       return () => window.clearTimeout(timer)
@@ -154,7 +97,7 @@ function App() {
     const player = offer.bonusCard === 'حماية' ? { ...offer.player, protected: true } : { ...offer.player }
     usedIds.current.add(player.id)
     setHumanSquad((squad) => [...squad, player])
-    if (offer.bonusCard) setHumanCards((cards) => addCard(cards, offer.bonusCard))
+    if (offer.bonusCard && offer.bonusCard !== 'حماية') setHumanCards((cards) => addCard(cards, offer.bonusCard))
     setTurnIndex((turn) => turn + 1)
   }
   const openBox = (offer: BoxOffer) => {
@@ -227,8 +170,8 @@ function App() {
       {!humanTurn ? <div className="waiting-card"><span className="spinner"/> المنافس يختار {positionLabel[currentPosition]}...</div> : <><p className="instruction">{peekMode ? 'اختر صندوقًا لتكشفه سرًا دون استهلاك محاولة' : mandatory ? 'رفضت الاختيار الأول — اختر صندوقك الإجباري' : revealedOffer ? 'هل تثق بهذا اللاعب؟' : 'اختر صندوقًا من الأربعة'}</p>{!mandatory && !revealedOffer && countCards(humanCards, 'كشف') > 0 && <button className={`reveal-action ${peekMode ? 'selected' : ''}`} onClick={() => setPeekMode((value) => !value)}>👁️ استخدام بطاقة كشف ({countCards(humanCards, 'كشف')})</button>}<div className="boxes">{offers.map((offer, index) => { const visible = offer.opened || peekedIds.has(offer.id); return <button key={offer.id} className={`mystery-box ${offer.opened ? 'opened' : ''} ${peekedIds.has(offer.id) ? 'peeked' : ''} ${offer.rejected ? 'rejected' : ''}`} onClick={() => openBox(offer)} disabled={Boolean(revealedOffer) || offer.rejected}>{visible ? <><PlayerCard player={offer.player} compact/>{offer.opened && offer.bonusCard && <BonusCardBadge card={offer.bonusCard}/>}{peekedIds.has(offer.id) && !offer.opened && <small className="peek-label">كشف سري — اضغط لاختياره</small>}</> : <><span>؟</span><small>الصندوق {index + 1}</small></>}</button>})}</div>{revealedOffer && <div className="decision-bar"><button className="accept" onClick={accept}>قبول</button><button className="reject" onClick={reject}>رفض والمجازفة</button></div>}</>}
     </div><TeamStrip name="أنت" squad={humanSquad} active={humanTurn} side="bottom"/></section>}
     {screen === 'cards' && <section className="cards-screen screen-enter"><p className="eyebrow">مرحلة البطاقات</p><h2>فرصة أخيرة قبل التشكيل</h2>{cardMessage ? <div className="card-message"><span className="spinner"/>{cardMessage}</div> : <><div className="card-inventory"><button disabled={!countCards(humanCards, 'سرقة')} className={cardMode === 'سرقة' ? 'selected' : ''} onClick={() => setCardMode('سرقة')}>🗡️ سرقة <b>{countCards(humanCards, 'سرقة')}</b></button><button disabled={!countCards(humanCards, 'تبديل')} className={cardMode === 'تبديل' ? 'selected' : ''} onClick={() => setCardMode('تبديل')}>🔄 تبديل <b>{countCards(humanCards, 'تبديل')}</b></button></div><p className="card-help">{cardMode === 'سرقة' ? 'اختر لاعبًا غير محمي من المنافس. سنرسل أضعف لاعب لديك في المركز نفسه.' : cardMode === 'تبديل' ? 'اختر لاعبًا من فريقك لاستبداله بلاعب مجهول من المركز نفسه.' : 'يمكنك استخدام بطاقة فعالة واحدة فقط أو التخطي.'}</p><div className="card-targets">{(cardMode === 'سرقة' ? aiSquad : humanSquad).map((player) => <button key={player.id} disabled={!cardMode || (cardMode === 'سرقة' && player.protected)} onClick={() => cardMode === 'سرقة' ? handleSteal(player.id) : handleSwap(player.id)}><PlayerCard player={player} compact/>{player.protected && <small>🛡️ محمي</small>}</button>)}</div><button className="ghost-button" onClick={() => finishCardPhase()}>تخطي البطاقات</button></>}</section>}
-    {screen === 'formation' && <section className="setup-screen screen-enter"><p className="eyebrow">اكتملت التشكيلة</p><h2>جهّز فريقك للمباراة</h2><FormationPitch squad={humanSquad} formation={formation} tactic={tactic}/><div className="option-group"><label>التشكيل</label><div>{formations.map((item) => <button className={formation === item ? 'selected' : ''} onClick={() => setFormation(item)} key={item}>{item}</button>)}</div></div><div className="option-group"><label>التكتيك</label><div>{tactics.map((item) => <button className={tactic === item ? 'selected' : ''} onClick={() => setTactic(item)} key={item}>{item}</button>)}</div></div><button className="primary-button" onClick={startSimulation}>ابدأ المباراة</button></section>}
-    {screen === 'simulation' && result && <section className="match-screen screen-enter"><div className="scoreboard"><div><span className="avatar">فم</span><small>{opponentName}</small></div><strong>{currentEvent?.awayScore ?? 0} <em>–</em> {currentEvent?.homeScore ?? 0}</strong><div><span className="avatar gold">أنت</span><small>فريقك</small></div></div><div className="clock"><span style={{ width: `${(elapsed / 60) * 100}%` }}/><b>{elapsed}'</b></div><MatchRadar homeFormation={formation} awayFormation={awayFormation} homeTactic={tactic} awayTactic={awayTactic} seed={matchSeed} elapsed={elapsed}/><div className="event-feed">{visibleEvents.map((event, index) => <p className={event.type === 'goal' ? 'goal-event' : ''} key={`${event.minute}-${index}`}><b>{event.minute}'</b>{event.text}</p>)}</div></section>}
+    {screen === 'formation' && <section className="setup-screen screen-enter"><p className="eyebrow">اكتملت التشكيلة</p><h2>جهّز فريقك للمباراة</h2><FormationPitch squad={humanSquad} formation={formation} tactic={tactic} perspective="home" /><div className="option-group"><label>التشكيل</label><div>{formations.map((item) => <button className={formation === item ? 'selected' : ''} onClick={() => setFormation(item)} key={item}>{item}</button>)}</div></div><div className="option-group"><label>التكتيك</label><div>{tactics.map((item) => <button className={tactic === item ? 'selected' : ''} onClick={() => setTactic(item)} key={item}>{item}</button>)}</div></div><button className="primary-button" onClick={startSimulation}>ابدأ المباراة</button></section>}
+    {screen === 'simulation' && result && <section className="match-screen screen-enter"><div className="scoreboard"><div><span className="avatar">فم</span><small>{opponentName}</small></div><strong>{currentEvent?.awayScore ?? 0} <em>–</em> {currentEvent?.homeScore ?? 0}</strong><div><span className="avatar gold">أنت</span><small>فريقك</small></div></div><div className="clock"><span style={{ width: `${(elapsed / 60) * 100}%` }}/><b>{elapsed}'</b></div><MatchRadar homeFormation={formation} awayFormation={awayFormation} homeTactic={tactic} awayTactic={awayTactic} seed={matchSeed} events={result.events} elapsed={elapsed} yourSide="home" /><div className="event-feed">{visibleEvents.map((event, index) => <p className={event.type === 'goal' ? 'goal-event' : ''} key={`${event.minute}-${index}`}><b>{event.minute}'</b>{event.text}</p>)}</div></section>}
     {screen === 'result' && result && <section className="result-screen screen-enter"><p className="eyebrow">انتهت المباراة</p><h2 className={result.winner === 'home' ? 'win' : 'loss'}>{result.winner === 'home' ? 'انتصار مستحق!' : 'خسارة مثيرة'}</h2><div className="final-score"><span>{result.homeScore}</span><em>–</em><span>{result.awayScore}</span></div>{result.homePenalties !== undefined && <p className="penalties">{result.homePenalties} – {result.awayPenalties} بركلات الترجيح</p>}<div className="result-card"><small>أفضل لاعب</small><PlayerCard player={result.mvp} compact/></div><div className="reason"><b>لماذا انتهت هكذا؟</b><p>{result.reason}</p></div><button className="primary-button" onClick={startSearch}>العب مباراة أخرى</button><button className="ghost-button" onClick={reset}>العودة للرئيسية</button></section>}
   </main>
 }

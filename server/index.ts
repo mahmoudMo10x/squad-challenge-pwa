@@ -17,6 +17,7 @@ type Match = {
   id: string; version: number; phase: OnlinePhase; seats: [Seat, Seat]; starter: 0 | 1; active: 0 | 1; turnIndex: number
   offers: BoxOffer[][]; currentOffers: BoxOffer[]; revealedId?: string; mandatory: boolean; cardDone: [boolean, boolean]
   deadline?: number; timer?: NodeJS.Timeout; rng: () => number; result?: ReturnType<typeof simulateMatch>; message?: string
+  simulationSeed?: number
 }
 
 const app = express()
@@ -89,7 +90,8 @@ function armTimer(match: Match) {
 function advanceDraft(match: Match, player: Player, bonusCard: CardType) {
   const seat = match.seats[match.active]
   seat.squad.push(bonusCard === 'حماية' ? { ...player, protected: true } : { ...player })
-  if (bonusCard) seat.cards = addCard(seat.cards, bonusCard)
+  // Protection is an instant box effect — never enters CardInventory.
+  if (bonusCard && bonusCard !== 'حماية') seat.cards = addCard(seat.cards, bonusCard)
   match.turnIndex += 1; match.version += 1; match.revealedId = undefined; match.mandatory = false
   if (match.turnIndex >= 14) { clearTimer(match); match.phase = 'cards'; match.active = match.starter; match.deadline = undefined; armTimer(match) }
   else { match.active = match.turnIndex % 2 === 0 ? match.starter : (1 - match.starter) as 0 | 1; match.currentOffers = match.offers[match.turnIndex]; armTimer(match) }

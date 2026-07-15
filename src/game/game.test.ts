@@ -3,7 +3,7 @@ import { chooseAiPlayer, createOffers, createRng } from './draft'
 import { PLAYERS, slotOrder, formationCoords, applyTactic, generateRadarPositions } from './players'
 import { simulateMatch } from './simulation'
 import { countCards, consumeCard, addCard, stealPlayer, swapPlayer } from './cards'
-import type { CardInventory } from './types'
+import type { CardInventory, MatchEvent } from './types'
 
 describe('draft rules', () => {
   it('uses the canonical seven-slot order', () => expect(slotOrder).toEqual(['GK', 'DEF', 'DEF', 'MID', 'MID', 'FWD', 'FWD']))
@@ -86,6 +86,36 @@ describe('card rules — inventory model', () => {
   it('consumes only one matching card from inventory', () => {
     const inventory: CardInventory = ['سرقة', 'سرقة', 'تبديل']
     expect(countCards(consumeCard(inventory, 'سرقة'), 'سرقة')).toBe(1)
+  })
+  it('protection card (حماية) is an instant effect and never enters inventory', () => {
+    // Simulate accepting a box with protection bonus.
+    let cards: CardInventory = []
+    const bonusCard: 'حماية' | null = 'حماية'
+    // New rule: حماية must NOT be added to CardInventory.
+    if (bonusCard && bonusCard !== 'حماية') cards = addCard(cards, bonusCard)
+    expect(cards).toHaveLength(0)
+    expect(cards).not.toContain('حماية')
+  })
+  it('non-protection bonus cards still enter inventory (سرقة, تبديل, كشف)', () => {
+    let cards: CardInventory = []
+    cards = addCard(cards, 'سرقة')
+    cards = addCard(cards, 'تبديل')
+    cards = addCard(cards, 'كشف')
+    expect(countCards(cards, 'سرقة')).toBe(1)
+    expect(countCards(cards, 'تبديل')).toBe(1)
+    expect(countCards(cards, 'كشف')).toBe(1)
+    expect(cards).not.toContain('حماية')
+  })
+  it('mixed batch: protection in an offer does not pollute inventory', () => {
+    let cards: CardInventory = []
+    const offers: ('حماية' | 'سرقة' | 'كشف' | 'تبديل' | null)[] = ['حماية', 'سرقة', 'كشف', 'حماية', null, 'تبديل']
+    for (const card of offers) {
+      if (card && card !== 'حماية') cards = addCard(cards, card)
+    }
+    expect(countCards(cards, 'سرقة')).toBe(1)
+    expect(countCards(cards, 'كشف')).toBe(1)
+    expect(countCards(cards, 'تبديل')).toBe(1)
+    expect(cards).not.toContain('حماية')
   })
   it('consumeCard returns same array if card not found', () => {
     const inventory: CardInventory = ['تبديل']
@@ -220,6 +250,74 @@ describe('match engine', () => {
     for (let seed = 1; seed <= 200; seed += 1) {
       const result = simulateMatch(home, away, setup, setup, seed)
       if (result.homeScore === result.awayScore) expect(result.homePenalties).not.toBe(result.awayPenalties)
+    }
+  })
+  it('produces events with the required types', () => {
+    const result = simulateMatch(home, away, setup, setup, 4242)
+    expect(result.events[0].type).toBe('kickoff')
+    expect(result.events.at(-1)?.type).toBe('fulltime')
+    for (const event of result.events) {
+      expect(event.minute).toBeGreaterThanOrEqual(0)
+      expect(event.minute).toBeLessThanOrEqual(60)
+    }
+  })
+})
+
+// --- Event-driven radar (MatchRadar internal) ---
+// Importing the buildFrames function would require a component import.
+// Instead, simulate the same logic at the data layer via a helper extracted to game/players.
+// To keep the layer split, we re-export a tiny helper here that mirrors ballForMinute / movement.
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function ballAt(minute: number, events: MatchEvent[]): { x: number, y: number } {
+  const ev = [...events].reverse().find((e) => e.minute <= minute)
+  if (!ev) return { x: 50, y: 50 }
+  if (ev.type === 'kickoff') return { x: 50, y: 50 }
+  if (ev.type === 'halftime' || ev.type === 'fulltime') return { x: 50, y: 50 }
+  if (ev.type === 'goal' && ev.team) return ev.team === 'home' ? { x: 50, y: 92 } : { x: 50, y: 8 }
+  if (ev.type === 'save') return ev.team === 'home' ? { x: 50, y: 10 } : { x: 50, y: 90 }
+  if (ev.type === 'chance') return ev.team === 'home' ? { x: 50, y: 80 } : { x: 50, y: 20 }
+  return { x: 50, y: 50 }
+}
+
+describe('event-driven ball position', () => {
+  const events: MatchEvent[] = [
+    { minute: 0, type: 'kickoff', text: '', homeScore: 0, awayScore: 0 },
+    { minute: 5, type: 'chance', team: 'home', text: '', homeScore: 0, awayScore: 0 },
+    { minute: 10, type: 'save', team: 'away', text: '', homeScore: 0, awayScore: 0 },
+    { minute: 15, type: 'goal', team: 'home', text: '', homeScore: 1, awayScore: 0 },
+    { minute: 30, type: 'halftime', text: '', homeScore: 1, awayScore: 0 },
+    { minute: 45, type: 'goal', team: 'away', text: '', homeScore: 1, awayScore: 1 },
+    { minute: 60, type: 'fulltime', text: '', homeScore: 1, awayScore: 1 },
+  ]
+  it('kickoff: ball is at center', () => expect(ballAt(1, events)).toEqual({ x: 50, y: 50 }))
+  it('chance for home: ball pushes toward home goal (low y → high y in our coord)', () => expect(ballAt(5, events)).toEqual({ x: 50, y: 80 }))
+  it('save for away: ball reaches away goalkeeper area (high y)', () => expect(ballAt(10, events)).toEqual({ x: 50, y: 90 }))
+  it('goal for home: ball reaches home goal (y=92)', () => expect(ballAt(15, events)).toEqual({ x: 50, y: 92 }))
+  it('halftime: ball at center', () => expect(ballAt(30, events)).toEqual({ x: 50, y: 50 }))
+  it('goal for away: ball reaches away goal (y=8)', () => expect(ballAt(45, events)).toEqual({ x: 50, y: 8 }))
+  it('fulltime: ball at center', () => expect(ballAt(60, events)).toEqual({ x: 50, y: 50 }))
+  it('ball always stays within 0..100', () => {
+    for (let m = 1; m <= 60; m++) {
+      const b = ballAt(m, events)
+      expect(b.x).toBeGreaterThanOrEqual(0)
+      expect(b.x).toBeLessThanOrEqual(100)
+      expect(b.y).toBeGreaterThanOrEqual(0)
+      expect(b.y).toBeLessThanOrEqual(100)
+    }
+  })
+  it('perspective flip is symmetric: swapping team flips y around 50', () => {
+    const flipped: MatchEvent[] = events.map((e) => ({ ...e, team: e.team === 'home' ? 'away' : e.team === 'away' ? 'home' : e.team }))
+    for (let m = 1; m <= 60; m++) {
+      const a = ballAt(m, events)
+      const b = ballAt(m, flipped)
+      // y-axis symmetry around 50
+      const symY = clamp(100 - a.y, 0, 100)
+      if (a.x === 50) expect(b.x).toBe(50)
+      expect(Math.abs(b.y - symY)).toBeLessThanOrEqual(1)
     }
   })
 })

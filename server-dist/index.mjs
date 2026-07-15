@@ -6,18 +6,6 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
 
-// src/game/draft.ts
-function createRng(seed) {
-  let state = seed >>> 0;
-  return () => {
-    state = state + 1831565813 >>> 0;
-    let value = state;
-    value = Math.imul(value ^ value >>> 15, value | 1);
-    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
-    return ((value ^ value >>> 14) >>> 0) / 4294967296;
-  };
-}
-
 // src/game/players.ts
 var firstNames = ["\u0631\u0627\u0634\u062F", "\u0632\u064A\u0627\u062F", "\u064A\u0627\u0633\u0631", "\u0645\u0631\u0648\u0627\u0646", "\u0633\u0644\u064A\u0645", "\u0639\u0645\u0631", "\u062A\u0627\u0645\u0631", "\u0646\u0627\u062F\u0631", "\u0641\u0627\u0631\u0633", "\u0623\u0643\u0631\u0645", "\u0647\u064A\u062B\u0645", "\u0645\u0635\u0639\u0628", "\u0628\u062F\u0631", "\u0631\u0627\u0645\u064A", "\u062C\u0627\u062F", "\u0623\u0646\u0633", "\u0633\u064A\u0641", "\u0648\u0644\u064A\u062F", "\u0643\u0646\u0627\u0646", "\u0645\u0627\u0632\u0646", "\u062D\u0633\u0627\u0645", "\u0644\u0624\u064A", "\u0646\u0627\u064A\u0641", "\u0643\u0631\u064A\u0645", "\u0645\u0647\u0646\u062F"];
 var lastNames = ["\u0627\u0644\u0633\u0627\u0644\u0645\u064A", "\u0627\u0644\u0646\u062C\u0627\u0631", "\u0627\u0644\u062D\u0631\u0628\u064A", "\u0643\u0645\u0627\u0644", "\u0627\u0644\u0642\u062D\u0637\u0627\u0646\u064A", "\u0634\u0627\u0647\u064A\u0646", "\u0641\u0624\u0627\u062F", "\u0639\u0627\u062F\u0644", "\u0627\u0644\u062F\u0648\u0633\u0631\u064A", "\u0646\u0627\u0635\u0631", "\u062C\u0627\u0628\u0631", "\u0639\u0648\u0636", "\u0645\u0646\u0635\u0648\u0631", "\u062E\u0637\u0627\u0628", "\u0645\u0631\u0627\u062F", "\u0634\u0631\u064A\u0641", "\u0631\u0628\u064A\u0639", "\u0634\u0648\u0642\u064A", "\u062D\u0645\u062F", "\u062E\u0644\u064A\u0644"];
@@ -48,6 +36,18 @@ var PLAYERS = distribution.flatMap(
   })
 );
 var slotOrder = ["GK", "DEF", "DEF", "MID", "MID", "FWD", "FWD"];
+
+// src/game/draft.ts
+function createRng(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = state + 1831565813 >>> 0;
+    let value = state;
+    value = Math.imul(value ^ value >>> 15, value | 1);
+    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+    return ((value ^ value >>> 14) >>> 0) / 4294967296;
+  };
+}
 
 // src/game/cards.ts
 var countCards = (inventory, type) => inventory.filter((card) => card === type).length;
@@ -262,7 +262,7 @@ function armTimer(match) {
 function advanceDraft(match, player, bonusCard) {
   const seat = match.seats[match.active];
   seat.squad.push(bonusCard === "\u062D\u0645\u0627\u064A\u0629" ? { ...player, protected: true } : { ...player });
-  if (bonusCard) seat.cards = addCard(seat.cards, bonusCard);
+  if (bonusCard && bonusCard !== "\u062D\u0645\u0627\u064A\u0629") seat.cards = addCard(seat.cards, bonusCard);
   match.turnIndex += 1;
   match.version += 1;
   match.revealedId = void 0;

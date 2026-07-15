@@ -4,6 +4,8 @@ import type { ClientToServerEvents, OnlineSnapshot, ServerToClientEvents } from 
 import type { CardType, Formation, Player, Tactic } from './game/types'
 import { countCards } from './game/cards'
 import { positionLabel } from './game/players'
+import { FormationPitch } from './components/FormationPitch'
+import { MatchRadar } from './components/MatchRadar'
 
 const formations: Formation[] = ['2-2-2', '3-2-1', '2-3-1', '1-3-2']
 const tactics: Tactic[] = ['متوازن', 'هجومي', 'دفاعي', 'ضغط عالٍ', 'مرتدات']
@@ -62,6 +64,8 @@ export default function OnlineGame({ onExit }: { onExit: () => void }) {
   const currentEvent = useMemo(() => snapshot?.result?.events.filter((event) => event.minute <= elapsed).at(-1), [snapshot?.result, elapsed])
   const liveMyScore = snapshot?.you === 0 ? currentEvent?.homeScore : currentEvent?.awayScore
   const liveOpponentScore = snapshot?.you === 0 ? currentEvent?.awayScore : currentEvent?.homeScore
+  // Perspective: I (snapshot.you=0) am the "home" team.
+  const mySide: 'home' | 'away' = snapshot?.you === 0 ? 'home' : 'away'
 
   const boxClick = (boxId: string) => {
     if (!base || !myTurn) return
@@ -90,7 +94,18 @@ export default function OnlineGame({ onExit }: { onExit: () => void }) {
       <div className={`online-team mine ${myTurn ? 'active' : ''}`}><span className="avatar gold">أنت</span><div><b>{me!.name}</b><small>{me!.squad.length}/7</small></div><div className="ratings">{me!.squad.map((p) => <i key={p.id}>{p.rating}</i>)}</div></div>
     </>}
     {snapshot.phase === 'cards' && <div className="online-stage"><p className="eyebrow">مرحلة البطاقات</p><h2>{myTurn ? 'استخدم بطاقة أو تخطَّ' : 'المنافس يقرر...'}</h2>{snapshot.message && <p className="server-message">{snapshot.message}</p>}{myTurn && <><div className="card-inventory"><button disabled={!countCards(me!.cards, 'سرقة')} className={cardMode === 'سرقة' ? 'selected' : ''} onClick={() => setCardMode('سرقة')}>🗡️ سرقة ({countCards(me!.cards, 'سرقة')})</button><button disabled={!countCards(me!.cards, 'تبديل')} className={cardMode === 'تبديل' ? 'selected' : ''} onClick={() => setCardMode('تبديل')}>🔄 تبديل ({countCards(me!.cards, 'تبديل')})</button></div><div className="card-targets">{(cardMode === 'سرقة' ? opponent!.squad : me!.squad).map((player) => <button key={player.id} disabled={!cardMode || (cardMode === 'سرقة' && player.protected)} onClick={() => cardAction(player.id)}><MiniCard player={player} protectedLabel/></button>)}</div><button className="ghost-button" onClick={() => emit('card:action', { ...base!, type: 'تخطي' })}>تخطي</button></>}</div>}
-    {snapshot.phase === 'setup' && <div className="online-stage"><p className="eyebrow">التشكيل والتكتيك</p><h2>{myTurn ? 'جهّز فريقك' : 'في انتظار المنافس'}</h2>{myTurn && <><div className="option-group"><label>التشكيل</label><div>{formations.map((item) => <button key={item} className={formation === item ? 'selected' : ''} onClick={() => setFormation(item)}>{item}</button>)}</div></div><div className="option-group"><label>التكتيك</label><div>{tactics.map((item) => <button key={item} className={tactic === item ? 'selected' : ''} onClick={() => setTactic(item)}>{item}</button>)}</div></div><button className="primary-button" onClick={() => emit('setup:lock', { ...base!, formation, tactic })}>تثبيت والاستعداد</button></>}</div>}
-    {(snapshot.phase === 'simulation' || snapshot.phase === 'result') && snapshot.result && <div className="online-stage match-online"><div className="scoreboard"><div>{opponent!.name}</div><strong>{liveOpponentScore ?? (snapshot.you === 0 ? snapshot.result.awayScore : snapshot.result.homeScore)} – {liveMyScore ?? (snapshot.you === 0 ? snapshot.result.homeScore : snapshot.result.awayScore)}</strong><div>أنت</div></div><div className="clock"><span style={{ width: `${elapsed / 60 * 100}%` }}/><b>{elapsed}'</b></div><div className="match-pitch simple"><div className={`ball team-${currentEvent?.team || 'home'}`}>⚽</div><div className="center-circle"/><div className="half-line"/></div>{snapshot.phase === 'result' && <div className="online-result"><h2>{snapshot.result.winner === (snapshot.you === 0 ? 'home' : 'away') ? 'فزت بالمباراة!' : 'انتهت بالخسارة'}</h2><p>{snapshot.result.reason}</p>{snapshot.result.homePenalties !== undefined && <b>{snapshot.result.homePenalties} – {snapshot.result.awayPenalties} ترجيحًا</b>}<button className="primary-button" onClick={onExit}>العودة للرئيسية</button></div>}</div>}
+    {snapshot.phase === 'setup' && <div className="online-stage"><p className="eyebrow">التشكيل والتكتيك</p><h2>{myTurn ? 'جهّز فريقك' : `في انتظار ${opponent!.name}`}</h2>{myTurn && <><div className="formation-preview-wrap"><FormationPitch squad={me!.squad} formation={formation} tactic={tactic} perspective={mySide} /></div><div className="option-group"><label>التشكيل</label><div>{formations.map((item) => <button key={item} className={formation === item ? 'selected' : ''} onClick={() => setFormation(item)}>{item}</button>)}</div></div><div className="option-group"><label>التكتيك</label><div>{tactics.map((item) => <button key={item} className={tactic === item ? 'selected' : ''} onClick={() => setTactic(item)}>{item}</button>)}</div></div><button className="primary-button" onClick={() => emit('setup:lock', { ...base!, formation, tactic })}>تثبيت والاستعداد</button></>}</div>}
+    {(snapshot.phase === 'simulation' || snapshot.phase === 'result') && snapshot.result && snapshot.simulationSeed !== undefined && (() => {
+      // Use real formations only once both have locked. During setup we fall back to defaults.
+      const myFormation = me!.setup?.formation ?? formation
+      const myTactic = me!.setup?.tactic ?? tactic
+      const opFormation = opponent!.setup?.formation ?? '2-2-2'
+      const opTactic = opponent!.setup?.tactic ?? 'متوازن'
+      const homeFormation = mySide === 'home' ? myFormation : opFormation
+      const awayFormation = mySide === 'home' ? opFormation : myFormation
+      const homeTactic = mySide === 'home' ? myTactic : opTactic
+      const awayTactic = mySide === 'home' ? opTactic : myTactic
+      return <div className="online-stage match-online"><div className="scoreboard"><div>{opponent!.name}</div><strong>{liveOpponentScore ?? (snapshot.you === 0 ? snapshot.result.awayScore : snapshot.result.homeScore)} – {liveMyScore ?? (snapshot.you === 0 ? snapshot.result.homeScore : snapshot.result.awayScore)}</strong><div>أنت</div></div><div className="clock"><span style={{ width: `${elapsed / 60 * 100}%` }}/><b>{elapsed}'</b></div><MatchRadar homeFormation={homeFormation} awayFormation={awayFormation} homeTactic={homeTactic} awayTactic={awayTactic} seed={snapshot.simulationSeed} events={snapshot.result.events} elapsed={elapsed} yourSide={mySide} /><div className="event-feed">{snapshot.result.events.filter((event) => event.minute <= elapsed).slice(-3).reverse().map((event, index) => <p className={event.type === 'goal' ? 'goal-event' : ''} key={`${event.minute}-${index}`}><b>{event.minute}'</b>{event.text}</p>)}</div>{snapshot.phase === 'result' && <div className="online-result"><h2>{snapshot.result.winner === (snapshot.you === 0 ? 'home' : 'away') ? 'فزت بالمباراة!' : 'انتهت بالخسارة'}</h2><p>{snapshot.result.reason}</p>{snapshot.result.homePenalties !== undefined && <b>{snapshot.result.homePenalties} – {snapshot.result.awayPenalties} ترجيحًا</b>}<button className="primary-button" onClick={onExit}>العودة للرئيسية</button></div>}</div>
+    })()}
   </section>
 }
