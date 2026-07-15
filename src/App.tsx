@@ -50,13 +50,13 @@ function MatchRadar({ homeFormation, awayFormation, homeTactic, awayTactic, seed
   const positionsRef = useRef<ReturnType<typeof generateRadarPositions> | null>(null)
 
   if (!positionsRef.current) {
-    positionsRef.current = generateRadarPositions(homeFormation, awayFormation, homeTactic, awayTactic, seed, 3600)
+    positionsRef.current = generateRadarPositions(homeFormation, awayFormation, homeTactic, awayTactic, seed, 60)
   }
 
   useEffect(() => {
     const positions = positionsRef.current
     if (!positions) return
-    const frame = Math.min(elapsed * 60, positions.home.length - 1)
+    const frame = Math.min(elapsed, positions.home.length - 1)
     const homeFrame = positions.home[frame]
     const awayFrame = positions.away[frame]
     const ballFrame = positions.ball[frame]
