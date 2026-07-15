@@ -1,0 +1,43 @@
+{
+  "name": "squad-challenge-pwa",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:server": "node --watch --import tsx server/index.ts",
+    "server": "node --import tsx server/index.ts",
+    "start": "node server-dist/index.mjs",
+    "build": "tsc -b && vite build",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --outfile=server-dist/index.mjs --packages=external",
+    "build:all": "npm run build && npm run build:server",
+    "lint": "oxlint",
+    "typecheck:server": "tsc -p tsconfig.server.json",
+    "test": "vitest run",
+    "test:online": "node --import tsx server/integration-test.ts",
+    "test:reconnect": "node --import tsx server/reconnect-test.ts",
+    "balance": "node --import tsx scripts/balance-report.ts",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.3.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "oxlint": "^1.71.0",
+    "tsx": "^4.23.1",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1",
+    "vitest": "^4.1.10"
+  }
+}

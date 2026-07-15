@@ -1,0 +1,177 @@
+{
+  "generatedAt": "2026-07-15T05:14:33.540Z",
+  "engineVersion": "0.3.0",
+  "totalSimulations": 55000,
+  "equalTeams": {
+    "samples": 20000,
+    "homeWinRate": 0.50765,
+    "regulationDrawRate": 0.2572,
+    "averageGoals": 2.5836
+  },
+  "strongVsWeak": {
+    "samples": 10000,
+    "homeWinRate": 0.7965,
+    "regulationDrawRate": 0.1676,
+    "averageGoals": 3.4426
+  },
+  "tacticMatrix": {
+    "متوازن__متوازن": {
+      "samples": 1000,
+      "homeWinRate": 0.492,
+      "regulationDrawRate": 0.247,
+      "averageGoals": 2.565
+    },
+    "متوازن__هجومي": {
+      "samples": 1000,
+      "homeWinRate": 0.487,
+      "regulationDrawRate": 0.229,
+      "averageGoals": 2.787
+    },
+    "متوازن__دفاعي": {
+      "samples": 1000,
+      "homeWinRate": 0.471,
+      "regulationDrawRate": 0.229,
+      "averageGoals": 2.454
+    },
+    "متوازن__ضغط عالٍ": {
+      "samples": 1000,
+      "homeWinRate": 0.462,
+      "regulationDrawRate": 0.252,
+      "averageGoals": 2.597
+    },
+    "متوازن__مرتدات": {
+      "samples": 1000,
+      "homeWinRate": 0.472,
+      "regulationDrawRate": 0.231,
+      "averageGoals": 2.59
+    },
+    "هجومي__متوازن": {
+      "samples": 1000,
+      "homeWinRate": 0.522,
+      "regulationDrawRate": 0.236,
+      "averageGoals": 2.806
+    },
+    "هجومي__هجومي": {
+      "samples": 1000,
+      "homeWinRate": 0.494,
+      "regulationDrawRate": 0.224,
+      "averageGoals": 2.938
+    },
+    "هجومي__دفاعي": {
+      "samples": 1000,
+      "homeWinRate": 0.464,
+      "regulationDrawRate": 0.249,
+      "averageGoals": 2.617
+    },
+    "هجومي__ضغط عالٍ": {
+      "samples": 1000,
+      "homeWinRate": 0.468,
+      "regulationDrawRate": 0.234,
+      "averageGoals": 2.839
+    },
+    "هجومي__مرتدات": {
+      "samples": 1000,
+      "homeWinRate": 0.476,
+      "regulationDrawRate": 0.23,
+      "averageGoals": 2.762
+    },
+    "دفاعي__متوازن": {
+      "samples": 1000,
+      "homeWinRate": 0.523,
+      "regulationDrawRate": 0.26,
+      "averageGoals": 2.396
+    },
+    "دفاعي__هجومي": {
+      "samples": 1000,
+      "homeWinRate": 0.531,
+      "regulationDrawRate": 0.253,
+      "averageGoals": 2.577
+    },
+    "دفاعي__دفاعي": {
+      "samples": 1000,
+      "homeWinRate": 0.506,
+      "regulationDrawRate": 0.271,
+      "averageGoals": 2.27
+    },
+    "دفاعي__ضغط عالٍ": {
+      "samples": 1000,
+      "homeWinRate": 0.468,
+      "regulationDrawRate": 0.246,
+      "averageGoals": 2.512
+    },
+    "دفاعي__مرتدات": {
+      "samples": 1000,
+      "homeWinRate": 0.472,
+      "regulationDrawRate": 0.233,
+      "averageGoals": 2.429
+    },
+    "ضغط عالٍ__متوازن": {
+      "samples": 1000,
+      "homeWinRate": 0.523,
+      "regulationDrawRate": 0.241,
+      "averageGoals": 2.561
+    },
+    "ضغط عالٍ__هجومي": {
+      "samples": 1000,
+      "homeWinRate": 0.557,
+      "regulationDrawRate": 0.233,
+      "averageGoals": 2.846
+    },
+    "ضغط عالٍ__دفاعي": {
+      "samples": 1000,
+      "homeWinRate": 0.491,
+      "regulationDrawRate": 0.263,
+      "averageGoals": 2.491
+    },
+    "ضغط عالٍ__ضغط عالٍ": {
+      "samples": 1000,
+      "homeWinRate": 0.503,
+      "regulationDrawRate": 0.265,
+      "averageGoals": 2.688
+    },
+    "ضغط عالٍ__مرتدات": {
+      "samples": 1000,
+      "homeWinRate": 0.477,
+      "regulationDrawRate": 0.27,
+      "averageGoals": 2.676
+    },
+    "مرتدات__متوازن": {
+      "samples": 1000,
+      "homeWinRate": 0.553,
+      "regulationDrawRate": 0.232,
+      "averageGoals": 2.675
+    },
+    "مرتدات__هجومي": {
+      "samples": 1000,
+      "homeWinRate": 0.543,
+      "regulationDrawRate": 0.251,
+      "averageGoals": 2.801
+    },
+    "مرتدات__دفاعي": {
+      "samples": 1000,
+      "homeWinRate": 0.548,
+      "regulationDrawRate": 0.264,
+      "averageGoals": 2.446
+    },
+    "مرتدات__ضغط عالٍ": {
+      "samples": 1000,
+      "homeWinRate": 0.5,
+      "regulationDrawRate": 0.251,
+      "averageGoals": 2.597
+    },
+    "مرتدات__مرتدات": {
+      "samples": 1000,
+      "homeWinRate": 0.517,
+      "regulationDrawRate": 0.242,
+      "averageGoals": 2.656
+    }
+  },
+  "gates": {
+    "equalSidesFair": true,
+    "drawRateHealthy": true,
+    "goalsHealthy": true,
+    "strengthMatters": true,
+    "noSameTacticSideBias": true
+  },
+  "passed": true
+}
