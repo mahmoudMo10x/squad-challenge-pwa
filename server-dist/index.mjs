@@ -6,10 +6,21 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
 
+// src/game/draft.ts
+function createRng(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = state + 1831565813 >>> 0;
+    let value = state;
+    value = Math.imul(value ^ value >>> 15, value | 1);
+    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+    return ((value ^ value >>> 14) >>> 0) / 4294967296;
+  };
+}
+
 // src/game/players.ts
 var firstNames = ["\u0631\u0627\u0634\u062F", "\u0632\u064A\u0627\u062F", "\u064A\u0627\u0633\u0631", "\u0645\u0631\u0648\u0627\u0646", "\u0633\u0644\u064A\u0645", "\u0639\u0645\u0631", "\u062A\u0627\u0645\u0631", "\u0646\u0627\u062F\u0631", "\u0641\u0627\u0631\u0633", "\u0623\u0643\u0631\u0645", "\u0647\u064A\u062B\u0645", "\u0645\u0635\u0639\u0628", "\u0628\u062F\u0631", "\u0631\u0627\u0645\u064A", "\u062C\u0627\u062F", "\u0623\u0646\u0633", "\u0633\u064A\u0641", "\u0648\u0644\u064A\u062F", "\u0643\u0646\u0627\u0646", "\u0645\u0627\u0632\u0646", "\u062D\u0633\u0627\u0645", "\u0644\u0624\u064A", "\u0646\u0627\u064A\u0641", "\u0643\u0631\u064A\u0645", "\u0645\u0647\u0646\u062F"];
 var lastNames = ["\u0627\u0644\u0633\u0627\u0644\u0645\u064A", "\u0627\u0644\u0646\u062C\u0627\u0631", "\u0627\u0644\u062D\u0631\u0628\u064A", "\u0643\u0645\u0627\u0644", "\u0627\u0644\u0642\u062D\u0637\u0627\u0646\u064A", "\u0634\u0627\u0647\u064A\u0646", "\u0641\u0624\u0627\u062F", "\u0639\u0627\u062F\u0644", "\u0627\u0644\u062F\u0648\u0633\u0631\u064A", "\u0646\u0627\u0635\u0631", "\u062C\u0627\u0628\u0631", "\u0639\u0648\u0636", "\u0645\u0646\u0635\u0648\u0631", "\u062E\u0637\u0627\u0628", "\u0645\u0631\u0627\u062F", "\u0634\u0631\u064A\u0641", "\u0631\u0628\u064A\u0639", "\u0634\u0648\u0642\u064A", "\u062D\u0645\u062F", "\u062E\u0644\u064A\u0644"];
-var cards = [null, null, null, null, null, "\u062D\u0645\u0627\u064A\u0629", "\u0633\u0631\u0642\u0629", "\u0643\u0634\u0641", "\u062A\u0628\u062F\u064A\u0644"];
 var distribution = [
   { position: "GK", count: 60 },
   { position: "DEF", count: 145 },
@@ -32,36 +43,22 @@ var PLAYERS = distribution.flatMap(
       attack: position === "GK" ? 20 + (seed >>> 4) % 20 : 50 + (seed >>> 5) % 47,
       passing: 48 + (seed >>> 8) % 49,
       defense: position === "GK" ? 45 + (seed >>> 9) % 35 : 48 + (seed >>> 11) % 49,
-      stamina: 54 + (seed >>> 14) % 43,
-      card: cards[(seed >>> 17) % cards.length]
+      stamina: 54 + (seed >>> 14) % 43
     };
   })
 );
 var slotOrder = ["GK", "DEF", "DEF", "MID", "MID", "FWD", "FWD"];
 
-// src/game/draft.ts
-function createRng(seed) {
-  let state = seed >>> 0;
-  return () => {
-    state = state + 1831565813 >>> 0;
-    let value = state;
-    value = Math.imul(value ^ value >>> 15, value | 1);
-    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
-    return ((value ^ value >>> 14) >>> 0) / 4294967296;
-  };
-}
-
 // src/game/cards.ts
-var activeCardCount = (squad, type) => squad.filter((player) => player.card === type).length;
-function consumeCard(squad, type) {
-  let consumed = false;
-  return squad.map((player) => {
-    if (!consumed && player.card === type) {
-      consumed = true;
-      return { ...player, card: null };
-    }
-    return player;
-  });
+var countCards = (inventory, type) => inventory.filter((card) => card === type).length;
+function consumeCard(inventory, type) {
+  const index = inventory.indexOf(type);
+  if (index < 0) return inventory;
+  return [...inventory.slice(0, index), ...inventory.slice(index + 1)];
+}
+function addCard(inventory, card) {
+  if (!card) return inventory;
+  return [...inventory, card];
 }
 function stealPlayer(own, opponent, targetId) {
   const target = opponent.find((player) => player.id === targetId);
@@ -81,7 +78,7 @@ function swapPlayer(squad, playerId, unavailableIds, rng) {
   if (!current) return null;
   const pool = PLAYERS.filter((player) => player.position === current.position && !unavailableIds.has(player.id));
   if (!pool.length) return null;
-  const replacement = { ...pool[Math.floor(rng() * pool.length)], protected: false, card: null };
+  const replacement = { ...pool[Math.floor(rng() * pool.length)], protected: false };
   return {
     squad: squad.map((player) => player.id === current.id ? replacement : player),
     removed: current,
@@ -184,6 +181,7 @@ app.use(express.static("dist"));
 app.use((_req, res) => res.sendFile("index.html", { root: "dist" }));
 function precommitOffers(rng) {
   const pools = /* @__PURE__ */ new Map();
+  const bonusCards2 = [null, null, null, null, null, "\u062D\u0645\u0627\u064A\u0629", "\u0633\u0631\u0642\u0629", "\u0643\u0634\u0641", "\u062A\u0628\u062F\u064A\u0644"];
   for (const position of ["GK", "DEF", "MID", "FWD"]) {
     const pool = PLAYERS.filter((player) => player.position === position);
     for (let index = pool.length - 1; index > 0; index -= 1) {
@@ -194,7 +192,13 @@ function precommitOffers(rng) {
   }
   return Array.from({ length: 14 }, (_, turn) => {
     const position = slotOrder[Math.floor(turn / 2)];
-    return pools.get(position).splice(0, 4).map((player) => ({ id: randomUUID(), player: { ...player }, opened: false, rejected: false }));
+    return pools.get(position).splice(0, 4).map((player) => ({
+      id: randomUUID(),
+      player: { ...player },
+      bonusCard: bonusCards2[Math.floor(rng() * bonusCards2.length)],
+      opened: false,
+      rejected: false
+    }));
   });
 }
 function socketFor(seat) {
@@ -208,10 +212,10 @@ function publicSnapshot(match, you) {
     you,
     starter: match.starter,
     activePlayer: match.active,
-    players: match.seats.map((seat, index) => ({ index, name: seat.name, connected: Boolean(seat.socketId), squad: seat.squad, setup: seat.setup })),
+    players: match.seats.map((seat, index) => ({ index, name: seat.name, connected: Boolean(seat.socketId), squad: seat.squad, cards: seat.cards, setup: seat.setup })),
     turnIndex: match.turnIndex,
     slot: match.phase === "draft" ? slotOrder[Math.floor(match.turnIndex / 2)] : void 0,
-    boxes: match.currentOffers.map((offer) => ({ id: offer.id, opened: offer.opened, rejected: offer.rejected, player: offer.opened ? offer.player : void 0 })),
+    boxes: match.currentOffers.map((offer) => ({ id: offer.id, opened: offer.opened, rejected: offer.rejected, player: offer.opened ? offer.player : void 0, bonusCard: offer.opened ? offer.bonusCard : void 0 })),
     mandatory: match.mandatory,
     cardDone: match.cardDone,
     deadline: match.deadline,
@@ -255,8 +259,10 @@ function armTimer(match) {
   match.deadline = Date.now() + TURN_MS;
   match.timer = setTimeout(() => autoAct(match), TURN_MS);
 }
-function advanceDraft(match, player) {
-  match.seats[match.active].squad.push({ ...player, protected: player.card === "\u062D\u0645\u0627\u064A\u0629" });
+function advanceDraft(match, player, bonusCard) {
+  const seat = match.seats[match.active];
+  seat.squad.push(bonusCard === "\u062D\u0645\u0627\u064A\u0629" ? { ...player, protected: true } : { ...player });
+  if (bonusCard) seat.cards = addCard(seat.cards, bonusCard);
   match.turnIndex += 1;
   match.version += 1;
   match.revealedId = void 0;
@@ -278,12 +284,12 @@ function autoAct(match) {
   if (match.phase === "draft") {
     if (match.revealedId) {
       const offer = match.currentOffers.find((item) => item.id === match.revealedId);
-      advanceDraft(match, offer.player);
+      advanceDraft(match, offer.player, offer.bonusCard);
     } else {
       const legal = match.currentOffers.filter((item) => !item.rejected && !item.opened);
       const offer = legal[Math.floor(match.rng() * legal.length)];
       offer.opened = true;
-      if (match.mandatory) advanceDraft(match, offer.player);
+      if (match.mandatory) advanceDraft(match, offer.player, offer.bonusCard);
       else {
         match.revealedId = offer.id;
         match.version += 1;
@@ -298,18 +304,20 @@ function cardAction(match, seat, type, targetId) {
   if (match.phase !== "cards" || match.active !== seat || match.cardDone[seat]) return false;
   const other = 1 - seat;
   if (type === "\u0633\u0631\u0642\u0629") {
-    if (!targetId || activeCardCount(match.seats[seat].squad, "\u0633\u0631\u0642\u0629") < 1) return false;
+    if (!targetId || countCards(match.seats[seat].cards, "\u0633\u0631\u0642\u0629") < 1) return false;
     const result = stealPlayer(match.seats[seat].squad, match.seats[other].squad, targetId);
     if (!result) return false;
-    match.seats[seat].squad = consumeCard(result.own, "\u0633\u0631\u0642\u0629");
+    match.seats[seat].squad = result.own;
+    match.seats[seat].cards = consumeCard(match.seats[seat].cards, "\u0633\u0631\u0642\u0629");
     match.seats[other].squad = result.opponent;
     match.message = `${match.seats[seat].name} \u0627\u0633\u062A\u062E\u062F\u0645 \u0628\u0637\u0627\u0642\u0629 \u0627\u0644\u0633\u0631\u0642\u0629`;
   } else if (type === "\u062A\u0628\u062F\u064A\u0644") {
-    if (!targetId || activeCardCount(match.seats[seat].squad, "\u062A\u0628\u062F\u064A\u0644") < 1) return false;
+    if (!targetId || countCards(match.seats[seat].cards, "\u062A\u0628\u062F\u064A\u0644") < 1) return false;
     const unavailable = new Set(match.seats.flatMap((item) => item.squad.map((player) => player.id)));
     const result = swapPlayer(match.seats[seat].squad, targetId, unavailable, match.rng);
     if (!result) return false;
-    match.seats[seat].squad = consumeCard(result.squad, "\u062A\u0628\u062F\u064A\u0644");
+    match.seats[seat].squad = result.squad;
+    match.seats[seat].cards = consumeCard(match.seats[seat].cards, "\u062A\u0628\u062F\u064A\u0644");
     match.message = `${match.seats[seat].name} \u0627\u0633\u062A\u062E\u062F\u0645 \u0628\u0637\u0627\u0642\u0629 \u0627\u0644\u062A\u0628\u062F\u064A\u0644`;
   }
   match.cardDone[seat] = true;
@@ -354,7 +362,7 @@ function lockSetup(match, seat, formation, tactic) {
 function createMatch(a, b) {
   const rng = createRng(Date.now() ^ Math.floor(Math.random() * 2 ** 31));
   const starter = rng() < 0.5 ? 0 : 1;
-  const match = { id: randomUUID(), version: 1, phase: "draft", seats: [{ token: a.token, socketId: a.socketId, name: a.name, squad: [] }, { token: b.token, socketId: b.socketId, name: b.name, squad: [] }], starter, active: starter, turnIndex: 0, offers: [], currentOffers: [], mandatory: false, cardDone: [false, false], rng };
+  const match = { id: randomUUID(), version: 1, phase: "draft", seats: [{ token: a.token, socketId: a.socketId, name: a.name, squad: [], cards: [] }, { token: b.token, socketId: b.socketId, name: b.name, squad: [], cards: [] }], starter, active: starter, turnIndex: 0, offers: [], currentOffers: [], mandatory: false, cardDone: [false, false], rng };
   match.offers = precommitOffers(rng);
   match.currentOffers = match.offers[0];
   matches.set(match.id, match);
@@ -404,7 +412,7 @@ io.on("connection", (socket) => {
     if (!offer) return fail(socket, "INVALID_BOX", "\u0627\u0644\u0635\u0646\u062F\u0648\u0642 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D");
     offer.opened = true;
     match.version += 1;
-    if (match.mandatory) advanceDraft(match, offer.player);
+    if (match.mandatory) advanceDraft(match, offer.player, offer.bonusCard);
     else {
       match.revealedId = offer.id;
       armTimer(match);
@@ -417,7 +425,7 @@ io.on("connection", (socket) => {
     const { match, seat } = valid;
     if (match.phase !== "draft" || match.active !== seat || !match.revealedId) return fail(socket, "ILLEGAL_ACTION", "\u0644\u0627 \u064A\u0648\u062C\u062F \u0627\u062E\u062A\u064A\u0627\u0631 \u064A\u0646\u062A\u0638\u0631 \u0627\u0644\u0642\u0631\u0627\u0631");
     const offer = match.currentOffers.find((item) => item.id === match.revealedId);
-    if (payload.accept) advanceDraft(match, offer.player);
+    if (payload.accept) advanceDraft(match, offer.player, offer.bonusCard);
     else {
       offer.rejected = true;
       match.revealedId = void 0;
@@ -431,10 +439,10 @@ io.on("connection", (socket) => {
     const valid = validated(socket, payload);
     if (!valid) return;
     const { match, seat } = valid;
-    if (match.phase !== "draft" || match.active !== seat || match.revealedId || activeCardCount(match.seats[seat].squad, "\u0643\u0634\u0641") < 1) return fail(socket, "NO_REVEAL", "\u0644\u0627 \u062A\u0648\u062C\u062F \u0628\u0637\u0627\u0642\u0629 \u0643\u0634\u0641 \u0635\u0627\u0644\u062D\u0629");
+    if (match.phase !== "draft" || match.active !== seat || match.revealedId || countCards(match.seats[seat].cards, "\u0643\u0634\u0641") < 1) return fail(socket, "NO_REVEAL", "\u0644\u0627 \u062A\u0648\u062C\u062F \u0628\u0637\u0627\u0642\u0629 \u0643\u0634\u0641 \u0635\u0627\u0644\u062D\u0629");
     const offer = match.currentOffers.find((item) => item.id === payload.boxId && !item.opened && !item.rejected);
     if (!offer) return fail(socket, "INVALID_BOX", "\u0627\u0644\u0635\u0646\u062F\u0648\u0642 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D");
-    match.seats[seat].squad = consumeCard(match.seats[seat].squad, "\u0643\u0634\u0641");
+    match.seats[seat].cards = consumeCard(match.seats[seat].cards, "\u0643\u0634\u0641");
     match.version += 1;
     socket.emit("card:peek", { boxId: offer.id, player: offer.player });
     broadcast(match);

@@ -1,4 +1,4 @@
-import { PLAYERS } from './players'
+import { bonusCards, PLAYERS } from './players'
 import type { BoxOffer, Player, Position } from './types'
 
 export function createRng(seed: number) {
@@ -20,16 +20,17 @@ export function createOffers(position: Position, usedIds: Set<string>, rng: () =
   return shuffled.map((player, index) => ({
     id: `${position}-${player.id}-${index}`,
     player: { ...player },
+    bonusCard: bonusCards[Math.floor(rng() * bonusCards.length)],
     opened: false,
     rejected: false,
   }))
 }
 
-export function chooseAiPlayer(offers: BoxOffer[], rng: () => number): Player {
+export function chooseAiPlayer(offers: BoxOffer[], rng: () => number): { player: Player; bonusCard: BoxOffer['bonusCard'] } {
   const first = offers[Math.floor(rng() * offers.length)]
   const acceptanceThreshold = 76 + Math.floor(rng() * 9)
-  if (first.player.rating >= acceptanceThreshold) return { ...first.player, protected: first.player.card === 'حماية' }
+  if (first.player.rating >= acceptanceThreshold) return { player: { ...first.player }, bonusCard: first.bonusCard }
   const remaining = offers.filter((offer) => offer.id !== first.id)
   const second = remaining[Math.floor(rng() * remaining.length)]
-  return { ...second.player, protected: second.player.card === 'حماية' }
+  return { player: { ...second.player }, bonusCard: second.bonusCard }
 }

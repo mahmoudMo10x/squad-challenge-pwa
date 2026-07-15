@@ -13,13 +13,15 @@ export interface Player {
   passing: number
   defense: number
   stamina: number
-  card: CardType
   protected?: boolean
 }
+
+export type CardInventory = CardType[]
 
 export interface BoxOffer {
   id: string
   player: Player
+  bonusCard: CardType
   opened: boolean
   rejected: boolean
 }

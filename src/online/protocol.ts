@@ -1,4 +1,4 @@
-import type { Formation, MatchResult, Player, Position, SquadSetup, Tactic } from '../game/types'
+import type { CardType, Formation, MatchResult, Player, Position, SquadSetup, Tactic } from '../game/types'
 
 export type OnlinePhase = 'queue' | 'draft' | 'cards' | 'setup' | 'simulation' | 'result' | 'abandoned'
 
@@ -7,6 +7,7 @@ export interface PublicBox {
   opened: boolean
   rejected: boolean
   player?: Player
+  bonusCard?: CardType
 }
 
 export interface OnlinePlayer {
@@ -14,6 +15,7 @@ export interface OnlinePlayer {
   name: string
   connected: boolean
   squad: Player[]
+  cards: CardType[]
   setup?: SquadSetup
 }
 
