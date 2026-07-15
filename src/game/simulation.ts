@@ -1,4 +1,4 @@
-import { createRng } from './draft'
+import { createRng } from './rng'
 import type { Formation, MatchEvent, MatchResult, Player, SquadSetup, Tactic } from './types'
 
 const tacticModifier: Record<Tactic, { attack: number; defense: number; stamina: number }> = {
